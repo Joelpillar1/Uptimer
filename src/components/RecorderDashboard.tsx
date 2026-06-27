@@ -190,110 +190,189 @@ export default function RecorderDashboard() {
 
   // Start Live Preview Sharing
   const startSharing = async (isManualToggle = true): Promise<boolean> => {
-    stopAllStreams();
+    // Selective cleanup of composited canvas rendering and audio contexts to avoid memory leaks
+    if (renderLoopIdRef.current) {
+      cancelAnimationFrame(renderLoopIdRef.current);
+      renderLoopIdRef.current = null;
+    }
+    if (compositeStreamRef.current) {
+      compositeStreamRef.current.getTracks().forEach((track) => track.stop());
+      compositeStreamRef.current = null;
+    }
+    if (mainPreviewVideoRef.current) {
+      mainPreviewVideoRef.current.srcObject = null;
+    }
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+
     triggerToast('Configuring media streams...', 'info');
 
     try {
       // 1. Get Screen / Display Media (if sourceType is 'screen')
-      let screenStream: MediaStream | null = null;
+      let screenStream = screenStreamRef.current;
+      const isScreenActive = screenStream && screenStream.getTracks().some(t => t.readyState === 'live');
+
       if (config.sourceType !== 'camera') {
-        const resConstraints: any = {
-          video: {
-            width: config.resolution === '4k' ? { ideal: 3840 } : config.resolution === '1440p' ? { ideal: 2560 } : config.resolution === '1080p' ? { ideal: 1920 } : { ideal: 1280 },
-            height: config.resolution === '4k' ? { ideal: 2160 } : config.resolution === '1440p' ? { ideal: 1440 } : config.resolution === '1080p' ? { ideal: 1080 } : { ideal: 720 },
-            frameRate: { ideal: config.fps },
-          },
-          audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false,
-          },
-        };
+        if (isScreenActive) {
+          console.log('Reusing active screen sharing stream');
+        } else {
+          // If there is an inactive/ended screen stream, stop it clean
+          if (screenStreamRef.current) {
+            screenStreamRef.current.getTracks().forEach(t => t.stop());
+            screenStreamRef.current = null;
+          }
 
-        screenStream = await navigator.mediaDevices.getDisplayMedia(resConstraints);
-        screenStreamRef.current = screenStream;
+          const resConstraints: any = {
+            video: {
+              width: config.resolution === '4k' ? { ideal: 3840 } : config.resolution === '1440p' ? { ideal: 2560 } : config.resolution === '1080p' ? { ideal: 1920 } : { ideal: 1280 },
+              height: config.resolution === '4k' ? { ideal: 2160 } : config.resolution === '1440p' ? { ideal: 1440 } : config.resolution === '1080p' ? { ideal: 1080 } : { ideal: 720 },
+              frameRate: { ideal: config.fps },
+            },
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+            },
+          };
 
-        // Listen for browser native 'Stop sharing' click
-        screenStream.getVideoTracks()[0].onended = () => {
-          triggerToast('Screen sharing stopped from browser.', 'info');
-          stopSharingAndSave(true); // Stop cleanly
-        };
+          screenStream = await navigator.mediaDevices.getDisplayMedia(resConstraints);
+          screenStreamRef.current = screenStream;
+
+          // Listen for browser native 'Stop sharing' click
+          screenStream.getVideoTracks()[0].onended = () => {
+            triggerToast('Screen sharing stopped from browser.', 'info');
+            stopSharingAndSave(true); // Stop cleanly
+          };
+        }
+      } else {
+        // Source is Camera Only, release screen tracks if active
+        if (screenStreamRef.current) {
+          screenStreamRef.current.getTracks().forEach(t => t.stop());
+          screenStreamRef.current = null;
+        }
+        screenStream = null;
       }
 
       // 2. Get Microphone (if enabled)
-      let micStream: MediaStream | null = null;
+      let micStream = micStreamRef.current;
+      const isMicActive = micStream && micStream.getTracks().some(t => t.readyState === 'live');
+
       if (config.micEnabled) {
-        try {
-          micStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-            },
-          });
-          micStreamRef.current = micStream;
-        } catch (micErr) {
-          console.warn('Microphone permission or access denied:', micErr);
-          triggerToast('Microphone access denied. Recording without mic.', 'error');
+        if (isMicActive) {
+          console.log('Reusing active microphone stream');
+        } else {
+          if (micStreamRef.current) {
+            micStreamRef.current.getTracks().forEach(t => t.stop());
+            micStreamRef.current = null;
+          }
+          try {
+            micStream = await navigator.mediaDevices.getUserMedia({
+              audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+              },
+            });
+            micStreamRef.current = micStream;
+          } catch (micErr) {
+            console.warn('Microphone permission or access denied:', micErr);
+            triggerToast('Microphone access denied. Recording without mic.', 'error');
+            micStream = null;
+          }
         }
+      } else {
+        // Mic is disabled, stop previous active mic tracks
+        if (micStreamRef.current) {
+          micStreamRef.current.getTracks().forEach(t => t.stop());
+          micStreamRef.current = null;
+        }
+        micStream = null;
       }
 
       // 3. Get Webcam/Camera (if enabled OR we are in camera-only mode)
-      let cameraStream: MediaStream | null = null;
+      let cameraStream = cameraStreamRef.current;
+      const isCameraActive = cameraStream && cameraStream.getTracks().some(t => t.readyState === 'live');
+
       if (config.cameraEnabled || config.sourceType === 'camera') {
-        try {
-          cameraStream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-              facingMode: 'user',
-            },
-          });
-          cameraStreamRef.current = cameraStream;
-        } catch (camErr) {
-          console.warn('Webcam permission or access denied:', camErr);
-          if (config.sourceType === 'camera') {
-            triggerToast('Webcam access is required for Camera Only mode.', 'error');
-            stopAllStreams();
-            return false;
-          } else {
-            triggerToast('Webcam access denied. Camera layout disabled.', 'error');
+        if (isCameraActive) {
+          console.log('Reusing active camera stream');
+        } else {
+          if (cameraStreamRef.current) {
+            cameraStreamRef.current.getTracks().forEach(t => t.stop());
+            cameraStreamRef.current = null;
+          }
+          try {
+            cameraStream = await navigator.mediaDevices.getUserMedia({
+              video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                facingMode: 'user',
+              },
+            });
+            cameraStreamRef.current = cameraStream;
+          } catch (camErr) {
+            console.warn('Webcam permission or access denied:', camErr);
+            if (config.sourceType === 'camera') {
+              triggerToast('Webcam access is required for Camera Only mode.', 'error');
+              stopAllStreams();
+              return false;
+            } else {
+              triggerToast('Webcam access denied. Camera layout disabled.', 'error');
+              cameraStream = null;
+            }
           }
         }
+      } else {
+        // Camera disabled, stop previous active camera tracks
+        if (cameraStreamRef.current) {
+          cameraStreamRef.current.getTracks().forEach(t => t.stop());
+          cameraStreamRef.current = null;
+        }
+        cameraStream = null;
       }
 
       // 4. Setup helper video elements to draw onto Canvas (only if screen stream is present)
       let screenVideoElement: HTMLVideoElement | null = null;
       if (screenStream) {
-        screenVideoElement = document.createElement('video');
-        screenVideoElement.autoplay = true;
-        screenVideoElement.playsInline = true;
-        screenVideoElement.muted = true;
-        screenVideoElement.srcObject = screenStream;
-        screenVideoRef.current = screenVideoElement;
-        
-        // Wait for video frame flow
-        await new Promise<void>((resolve) => {
-          screenVideoElement!.onloadedmetadata = () => {
-            screenVideoElement!.play().then(() => resolve());
-          };
-        });
+        if (screenVideoRef.current && screenVideoRef.current.srcObject === screenStream) {
+          screenVideoElement = screenVideoRef.current;
+        } else {
+          screenVideoElement = document.createElement('video');
+          screenVideoElement.autoplay = true;
+          screenVideoElement.playsInline = true;
+          screenVideoElement.muted = true;
+          screenVideoElement.srcObject = screenStream;
+          screenVideoRef.current = screenVideoElement;
+          
+          // Wait for video frame flow
+          await new Promise<void>((resolve) => {
+            screenVideoElement!.onloadedmetadata = () => {
+              screenVideoElement!.play().then(() => resolve()).catch(() => resolve());
+            };
+          });
+        }
       }
 
       let cameraVideoElement: HTMLVideoElement | null = null;
       if (cameraStream) {
-        cameraVideoElement = document.createElement('video');
-        cameraVideoElement.autoplay = true;
-        cameraVideoElement.playsInline = true;
-        cameraVideoElement.muted = true;
-        cameraVideoElement.srcObject = cameraStream;
-        cameraVideoRef.current = cameraVideoElement;
+        if (cameraVideoRef.current && cameraVideoRef.current.srcObject === cameraStream) {
+          cameraVideoElement = cameraVideoRef.current;
+        } else {
+          cameraVideoElement = document.createElement('video');
+          cameraVideoElement.autoplay = true;
+          cameraVideoElement.playsInline = true;
+          cameraVideoElement.muted = true;
+          cameraVideoElement.srcObject = cameraStream;
+          cameraVideoRef.current = cameraVideoElement;
 
-        await new Promise<void>((resolve) => {
-          cameraVideoElement!.onloadedmetadata = () => {
-            cameraVideoElement!.play().then(() => resolve());
-          };
-        });
+          await new Promise<void>((resolve) => {
+            cameraVideoElement!.onloadedmetadata = () => {
+              cameraVideoElement!.play().then(() => resolve()).catch(() => resolve());
+            };
+          });
+        }
       }
 
       // 5. Build Mixed Audio context
