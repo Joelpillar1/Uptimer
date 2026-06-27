@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { KeyboardShortcuts } from '../types';
-import { Keyboard, RotateCcw, AlertCircle, Sparkles } from 'lucide-react';
+import { Keyboard, RotateCcw, AlertCircle, Sparkles, Info } from 'lucide-react';
 
 interface ShortcutSettingsProps {
   shortcuts: KeyboardShortcuts;
@@ -140,6 +140,40 @@ export default function ShortcutSettings({
           </p>
         </div>
       )}
+
+      {/* BACKGROUND LIMITATION & GLOBAL MEDIA KEY BRIDGE EXPLANATION */}
+      <div className="p-3.5 bg-brand-accent/5 border border-brand-accent/20 rounded-xl space-y-2.5 text-[11px] leading-relaxed" id="background-shortcuts-info">
+        <div className="flex items-center space-x-1.5 text-brand-accent font-serif font-semibold">
+          <Sparkles size={13} />
+          <span>Out-of-Focus Global Control</span>
+        </div>
+        <p className="text-brand-text-muted">
+          By default, web browsers strictly block keyboard hotkeys like <code className="text-brand-accent">Alt+R</code> when you switch to another app, window, or tab to ensure standard user security.
+        </p>
+        <div className="pt-2 border-t border-brand-border/40 space-y-1.5 text-brand-text-muted">
+          <p className="font-semibold text-brand-text flex items-center space-x-1">
+            <Info size={11} className="text-brand-accent shrink-0" />
+            <span>Premium Media Keys Bridge Enabled:</span>
+          </p>
+          <p>
+            To bypass browser blocks, you can use your keyboard's physical <strong>Media Keys</strong> or operating system playback panel globally in the background:
+          </p>
+          <ul className="space-y-1 text-[10px] font-mono text-brand-text">
+            <li className="flex items-center space-x-1">
+              <span className="w-1 h-1 bg-brand-accent rounded-full shrink-0" />
+              <span><strong className="text-brand-accent font-semibold">Play / Pause</strong>: Pause & Resume recording</span>
+            </li>
+            <li className="flex items-center space-x-1">
+              <span className="w-1 h-1 bg-brand-accent rounded-full shrink-0" />
+              <span><strong className="text-brand-accent font-semibold">Stop Key</strong>: Stop and Save capture</span>
+            </li>
+            <li className="flex items-center space-x-1">
+              <span className="w-1 h-1 bg-brand-accent rounded-full shrink-0" />
+              <span><strong className="text-brand-accent font-semibold">Next / Prev</strong>: Capture Instant Screenshot</span>
+            </li>
+          </ul>
+        </div>
+      </div>
     </div>
   );
 }

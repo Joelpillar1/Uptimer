@@ -989,6 +989,90 @@ export default function RecorderDashboard() {
     handleDynamicCameraToggle();
   }, [config.cameraEnabled, config.sourceType]);
 
+  // --- MEDIA SESSION & SILENT AUDIO BRIDGE FOR BACKGROUND/GLOBAL KEYS ---
+  const silentAudioRef = useRef<HTMLAudioElement | null>(null);
+  const pauseRecordingRef = useRef(pauseRecording);
+  const resumeRecordingRef = useRef(resumeRecording);
+  const stopSharingAndSaveRef = useRef(stopSharingAndSave);
+  const takeScreenshotRef = useRef(takeScreenshot);
+
+  useEffect(() => {
+    pauseRecordingRef.current = pauseRecording;
+    resumeRecordingRef.current = resumeRecording;
+    stopSharingAndSaveRef.current = stopSharingAndSave;
+    takeScreenshotRef.current = takeScreenshot;
+  });
+
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+
+    if (status === 'recording' || status === 'paused') {
+      // Create and play silent loop audio element to keep background media session active
+      if (!silentAudioRef.current) {
+        const audio = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==');
+        audio.loop = true;
+        silentAudioRef.current = audio;
+      }
+      
+      if (status === 'recording') {
+        silentAudioRef.current.play().catch((err) => {
+          console.warn('Silent audio play blocked:', err);
+        });
+        navigator.mediaSession.playbackState = 'playing';
+      } else {
+        silentAudioRef.current.pause();
+        navigator.mediaSession.playbackState = 'paused';
+      }
+
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: 'Screen Recording Session',
+        artist: 'Active Recorder',
+        album: status === 'recording' ? '🔴 Recording...' : '⏸️ Paused',
+        artwork: [
+          { src: 'https://cdn-icons-png.flaticon.com/512/5278/5278658.png', sizes: '512x512', type: 'image/png' }
+        ]
+      });
+
+      // Register Media Key actions
+      try {
+        navigator.mediaSession.setActionHandler('play', () => {
+          resumeRecordingRef.current();
+        });
+        navigator.mediaSession.setActionHandler('pause', () => {
+          pauseRecordingRef.current();
+        });
+        navigator.mediaSession.setActionHandler('stop', () => {
+          stopSharingAndSaveRef.current(false);
+        });
+        // Previous Track & Next Track media keys can trigger screenshot capture!
+        navigator.mediaSession.setActionHandler('previoustrack', () => {
+          takeScreenshotRef.current();
+        });
+        navigator.mediaSession.setActionHandler('nexttrack', () => {
+          takeScreenshotRef.current();
+        });
+      } catch (err) {
+        console.warn('Error setting mediaSession action handlers:', err);
+      }
+    } else {
+      // Idle or review, turn off background media session gracefully
+      if (silentAudioRef.current) {
+        silentAudioRef.current.pause();
+        silentAudioRef.current.currentTime = 0;
+      }
+      try {
+        navigator.mediaSession.playbackState = 'none';
+        navigator.mediaSession.setActionHandler('play', null);
+        navigator.mediaSession.setActionHandler('pause', null);
+        navigator.mediaSession.setActionHandler('stop', null);
+        navigator.mediaSession.setActionHandler('previoustrack', null);
+        navigator.mediaSession.setActionHandler('nexttrack', null);
+      } catch (e) {
+        // ignore
+      }
+    }
+  }, [status]);
+
   // --- 8. ACTIONS ON COMPLETED CAPTURES ---
 
   const handleDownloadItem = (item: RecordingItem, ext = 'webm') => {
