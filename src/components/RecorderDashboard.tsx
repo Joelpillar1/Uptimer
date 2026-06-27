@@ -58,6 +58,11 @@ export default function RecorderDashboard() {
     sourceType: 'screen',
   });
 
+  const configRef = useRef(config);
+  useEffect(() => {
+    configRef.current = config;
+  }, [config]);
+
   const [shortcuts, setShortcuts] = useState<KeyboardShortcuts>({
     startStop: 'Alt+R',
     pauseResume: 'Alt+P',
@@ -188,6 +193,57 @@ export default function RecorderDashboard() {
     setActiveStream(null);
   };
 
+  const ensureCameraStream = async (): Promise<boolean> => {
+    let cameraStream = cameraStreamRef.current;
+    const isCameraActive = cameraStream && cameraStream.getTracks().some(t => t.readyState === 'live');
+    if (isCameraActive) {
+      return true;
+    }
+
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: 'user',
+        },
+      });
+      cameraStreamRef.current = cameraStream;
+
+      // Setup/update camera video element
+      let cameraVideoElement = cameraVideoRef.current;
+      if (!cameraVideoElement) {
+        cameraVideoElement = document.createElement('video');
+        cameraVideoElement.autoplay = true;
+        cameraVideoElement.playsInline = true;
+        cameraVideoElement.muted = true;
+        cameraVideoRef.current = cameraVideoElement;
+      }
+      cameraVideoElement.srcObject = cameraStream;
+
+      await new Promise<void>((resolve) => {
+        cameraVideoElement!.onloadedmetadata = () => {
+          cameraVideoElement!.play().then(() => resolve()).catch(() => resolve());
+        };
+      });
+      return true;
+    } catch (camErr) {
+      console.warn('Webcam permission or access denied:', camErr);
+      triggerToast('Webcam access denied. Camera layout disabled.', 'error');
+      return false;
+    }
+  };
+
+  const stopCameraStream = () => {
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((t) => t.stop());
+      cameraStreamRef.current = null;
+    }
+    if (cameraVideoRef.current) {
+      cameraVideoRef.current.srcObject = null;
+    }
+  };
+
   // Start Live Preview Sharing
   const startSharing = async (isManualToggle = true): Promise<boolean> => {
     // Selective cleanup of composited canvas rendering and audio contexts to avoid memory leaks
@@ -196,7 +252,15 @@ export default function RecorderDashboard() {
       renderLoopIdRef.current = null;
     }
     if (compositeStreamRef.current) {
-      compositeStreamRef.current.getTracks().forEach((track) => track.stop());
+      compositeStreamRef.current.getTracks().forEach((track) => {
+        // Only stop if this track is not part of the active screen/camera/mic source streams
+        const isScreenTrack = screenStreamRef.current?.getTracks().includes(track);
+        const isCameraTrack = cameraStreamRef.current?.getTracks().includes(track);
+        const isMicTrack = micStreamRef.current?.getTracks().includes(track);
+        if (!isScreenTrack && !isCameraTrack && !isMicTrack) {
+          track.stop();
+        }
+      });
       compositeStreamRef.current = null;
     }
     if (mainPreviewVideoRef.current) {
@@ -218,7 +282,6 @@ export default function RecorderDashboard() {
         if (isScreenActive) {
           console.log('Reusing active screen sharing stream');
         } else {
-          // If there is an inactive/ended screen stream, stop it clean
           if (screenStreamRef.current) {
             screenStreamRef.current.getTracks().forEach(t => t.stop());
             screenStreamRef.current = null;
@@ -247,7 +310,6 @@ export default function RecorderDashboard() {
           };
         }
       } else {
-        // Source is Camera Only, release screen tracks if active
         if (screenStreamRef.current) {
           screenStreamRef.current.getTracks().forEach(t => t.stop());
           screenStreamRef.current = null;
@@ -283,7 +345,6 @@ export default function RecorderDashboard() {
           }
         }
       } else {
-        // Mic is disabled, stop previous active mic tracks
         if (micStreamRef.current) {
           micStreamRef.current.getTracks().forEach(t => t.stop());
           micStreamRef.current = null;
@@ -292,48 +353,11 @@ export default function RecorderDashboard() {
       }
 
       // 3. Get Webcam/Camera (if enabled OR we are in camera-only mode)
-      let cameraStream = cameraStreamRef.current;
-      const isCameraActive = cameraStream && cameraStream.getTracks().some(t => t.readyState === 'live');
-
       if (config.cameraEnabled || config.sourceType === 'camera') {
-        if (isCameraActive) {
-          console.log('Reusing active camera stream');
-        } else {
-          if (cameraStreamRef.current) {
-            cameraStreamRef.current.getTracks().forEach(t => t.stop());
-            cameraStreamRef.current = null;
-          }
-          try {
-            cameraStream = await navigator.mediaDevices.getUserMedia({
-              video: {
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
-                facingMode: 'user',
-              },
-            });
-            cameraStreamRef.current = cameraStream;
-          } catch (camErr) {
-            console.warn('Webcam permission or access denied:', camErr);
-            if (config.sourceType === 'camera') {
-              triggerToast('Webcam access is required for Camera Only mode.', 'error');
-              stopAllStreams();
-              return false;
-            } else {
-              triggerToast('Webcam access denied. Camera layout disabled.', 'error');
-              cameraStream = null;
-            }
-          }
-        }
-      } else {
-        // Camera disabled, stop previous active camera tracks
-        if (cameraStreamRef.current) {
-          cameraStreamRef.current.getTracks().forEach(t => t.stop());
-          cameraStreamRef.current = null;
-        }
-        cameraStream = null;
+        await ensureCameraStream();
       }
 
-      // 4. Setup helper video elements to draw onto Canvas (only if screen stream is present)
+      // 4. Setup screen helper video elements to draw onto Canvas
       let screenVideoElement: HTMLVideoElement | null = null;
       if (screenStream) {
         if (screenVideoRef.current && screenVideoRef.current.srcObject === screenStream) {
@@ -346,30 +370,9 @@ export default function RecorderDashboard() {
           screenVideoElement.srcObject = screenStream;
           screenVideoRef.current = screenVideoElement;
           
-          // Wait for video frame flow
           await new Promise<void>((resolve) => {
             screenVideoElement!.onloadedmetadata = () => {
               screenVideoElement!.play().then(() => resolve()).catch(() => resolve());
-            };
-          });
-        }
-      }
-
-      let cameraVideoElement: HTMLVideoElement | null = null;
-      if (cameraStream) {
-        if (cameraVideoRef.current && cameraVideoRef.current.srcObject === cameraStream) {
-          cameraVideoElement = cameraVideoRef.current;
-        } else {
-          cameraVideoElement = document.createElement('video');
-          cameraVideoElement.autoplay = true;
-          cameraVideoElement.playsInline = true;
-          cameraVideoElement.muted = true;
-          cameraVideoElement.srcObject = cameraStream;
-          cameraVideoRef.current = cameraVideoElement;
-
-          await new Promise<void>((resolve) => {
-            cameraVideoElement!.onloadedmetadata = () => {
-              cameraVideoElement!.play().then(() => resolve()).catch(() => resolve());
             };
           });
         }
@@ -382,7 +385,7 @@ export default function RecorderDashboard() {
 
       const audioDestination = audioCtx.createMediaStreamDestination();
 
-      // Connect screen audio (system sound) if present
+      // Connect screen audio if present
       if (screenStream) {
         const screenAudioTracks = screenStream.getAudioTracks();
         if (screenAudioTracks.length > 0) {
@@ -394,11 +397,8 @@ export default function RecorderDashboard() {
       // Connect microphone if present
       if (micStream && micStream.getAudioTracks().length > 0) {
         const micAudioSource = audioCtx.createMediaStreamSource(new MediaStream([micStream.getAudioTracks()[0]]));
-        
-        // Add a gain node to control mic volume / amplify it nicely
         const gainNode = audioCtx.createGain();
-        gainNode.gain.value = 1.2; // Slightly boost the microphone
-        
+        gainNode.gain.value = 1.2;
         micAudioSource.connect(gainNode);
         gainNode.connect(audioDestination);
       }
@@ -409,17 +409,18 @@ export default function RecorderDashboard() {
       let finalVideoStream: MediaStream;
 
       if (config.sourceType === 'camera') {
+        const cameraStream = cameraStreamRef.current;
         if (!cameraStream) {
           throw new Error('Camera stream is required for Camera Only mode');
         }
         finalVideoStream = cameraStream;
-      } else if (cameraStream && cameraVideoElement && screenVideoElement) {
-        // Mode: Composite Mode (Overlay layout on canvas)
+      } else {
+        // ALWAYS use Canvas Compositor for Screen Mode to support seamless live camera overlay toggle!
         const canvas = document.createElement('canvas');
         
         // Match the video capture dimensions
-        const capWidth = screenVideoElement.videoWidth || 1920;
-        const capHeight = screenVideoElement.videoHeight || 1080;
+        const capWidth = screenVideoElement ? screenVideoElement.videoWidth || 1920 : 1920;
+        const capHeight = screenVideoElement ? screenVideoElement.videoHeight || 1080 : 1080;
         canvas.width = capWidth;
         canvas.height = capHeight;
         canvasRef.current = canvas;
@@ -438,13 +439,16 @@ export default function RecorderDashboard() {
           const context = canvasCtxRef.current;
 
           // 1. Draw base display screen
-          if (screenVideoRef.current) {
+          if (screenVideoRef.current && screenVideoRef.current.readyState >= 2) {
             context.drawImage(screenVideoRef.current, 0, 0, c.width, c.height);
+          } else {
+            context.fillStyle = '#0f0e0d';
+            context.fillRect(0, 0, c.width, c.height);
           }
 
-          // 2. Draw Camera PIP Overlay if camera active
-          if (cameraVideoRef.current && cameraStreamRef.current) {
-            // PIP sizing calculation (e.g. width is 18% of screen width)
+          // 2. Draw Camera PIP Overlay if camera active and enabled
+          if (configRef.current.cameraEnabled && cameraVideoRef.current && cameraStreamRef.current && cameraVideoRef.current.readyState >= 2) {
+            // PIP sizing calculation
             const pipW = Math.round(c.width * 0.18);
             const pipH = Math.round(pipW * 0.75); // 4:3 standard aspect ratio crop
             const padding = Math.round(c.width * 0.02);
@@ -452,20 +456,19 @@ export default function RecorderDashboard() {
             let pipX = c.width - pipW - padding;
             let pipY = c.height - pipH - padding;
 
-            if (config.pipPosition === 'top-left') {
+            if (configRef.current.pipPosition === 'top-left') {
               pipX = padding;
               pipY = padding;
-            } else if (config.pipPosition === 'top-right') {
+            } else if (configRef.current.pipPosition === 'top-right') {
               pipX = c.width - pipW - padding;
               pipY = padding;
-            } else if (config.pipPosition === 'bottom-left') {
+            } else if (configRef.current.pipPosition === 'bottom-left') {
               pipX = padding;
               pipY = c.height - pipH - padding;
             }
 
             context.save();
-            if (config.cameraShape === 'circle') {
-              // Make camera perfectly circular
+            if (configRef.current.cameraShape === 'circle') {
               const radius = Math.min(pipW, pipH) / 2;
               const cx = pipX + pipW / 2;
               const cy = pipY + pipH / 2;
@@ -474,10 +477,8 @@ export default function RecorderDashboard() {
               context.arc(cx, cy, radius, 0, Math.PI * 2);
               context.clip();
 
-              // Draw camera center crop onto circle
               context.drawImage(cameraVideoRef.current, cx - radius, cy - radius, radius * 2, radius * 2);
             } else {
-              // Rounded square style
               const radius = 16;
               context.beginPath();
               context.roundRect(pipX, pipY, pipW, pipH, radius);
@@ -487,10 +488,10 @@ export default function RecorderDashboard() {
             context.restore();
 
             // Draw clean border stroke
-            context.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+            context.strokeStyle = 'rgba(255, 255, 255, 0.85)';
             context.lineWidth = Math.round(c.width * 0.002) || 2;
             context.beginPath();
-            if (config.cameraShape === 'circle') {
+            if (configRef.current.cameraShape === 'circle') {
               const radius = Math.min(pipW, pipH) / 2;
               const cx = pipX + pipW / 2;
               const cy = pipY + pipH / 2;
@@ -511,9 +512,6 @@ export default function RecorderDashboard() {
 
         // Capture stream of composited canvas
         finalVideoStream = canvas.captureStream(config.fps);
-      } else {
-        // Mode: Direct Screen Mode (No webcam overlay overhead)
-        finalVideoStream = screenStream!;
       }
 
       // 7. Combine the composited video track with mixed audio track
@@ -963,12 +961,33 @@ export default function RecorderDashboard() {
     };
   }, [shortcuts, status, config]);
 
-  // Restart streams if hotkey triggers config toggle
+  // Restart streams if core parameters change
   useEffect(() => {
     if (isSharingRef.current && status === 'idle') {
       startSharing(false);
     }
-  }, [config.micEnabled, config.cameraEnabled, config.pipPosition, config.cameraShape, config.resolution, config.fps]);
+  }, [config.sourceType, config.micEnabled, config.resolution, config.fps]);
+
+  // Dynamic camera toggle handling in real-time
+  useEffect(() => {
+    const handleDynamicCameraToggle = async () => {
+      if (!isSharingRef.current) return;
+
+      if (config.sourceType !== 'camera') {
+        if (config.cameraEnabled) {
+          const success = await ensureCameraStream();
+          if (success) {
+            triggerToast('Webcam overlay enabled successfully!', 'success');
+          }
+        } else {
+          stopCameraStream();
+          triggerToast('Webcam overlay disabled.', 'info');
+        }
+      }
+    };
+
+    handleDynamicCameraToggle();
+  }, [config.cameraEnabled, config.sourceType]);
 
   // --- 8. ACTIONS ON COMPLETED CAPTURES ---
 
