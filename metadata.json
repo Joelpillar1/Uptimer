@@ -1,0 +1,6 @@
+{
+  "name": "Screen Recorder Pro",
+  "description": "High-quality, in-browser screen and audio recorder with real-time snapshot capture, video trimming, and flexible format exports.",
+  "requestFramePermissions": ["camera", "microphone", "display-capture"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
