@@ -332,6 +332,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
   // Robustly verify and set metadata on mount/recording change
   useEffect(() => {
     if (videoRef.current) {
+      videoRef.current.load();
       if (videoRef.current.readyState >= 1) {
         setDuration(videoRef.current.duration || recording.duration || 15);
         if (videoRef.current.videoWidth) {
@@ -718,7 +719,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
     }
 
     // --- 5. DRAW ACTIVE VIDEO FRAME ---
-    if (videoEl && videoEl.readyState >= 2) {
+    if (videoEl && (videoEl.readyState >= 1 || videoEl.videoWidth > 0)) {
       if (isActiveZoom) {
         const scale = activeZoomScale || 1.4;
         const sw = rawVideoW / scale;
@@ -1173,11 +1174,20 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
               src={recording.url}
               onTimeUpdate={handleTimeUpdate}
               onLoadedMetadata={handleLoadedMetadata}
-              style={{ position: 'absolute', width: '1px', height: '1px', opacity: 0, pointerEvents: 'none', overflow: 'hidden' }}
+              style={{
+                position: 'fixed',
+                left: '-9999px',
+                top: '-9999px',
+                width: '480px',
+                height: '270px',
+                opacity: 0.01,
+                pointerEvents: 'none',
+              }}
               playsInline
               muted={isMuted}
               loop
-              preload="metadata"
+              preload="auto"
+              crossOrigin="anonymous"
             />
           </div>
 
