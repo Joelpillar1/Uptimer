@@ -38,6 +38,14 @@ export type WindowChromeId = 'none' | 'macos-dark' | 'macos-light' | 'windows-da
 export type ImageBlurLevel = 'none' | 'low' | 'moderate' | 'high';
 export type BackgroundTypeTab = 'image' | 'gradient' | 'color' | 'none';
 
+export interface TimelineSegment {
+  id: string;
+  type: 'trim' | 'zoom';
+  start: number;
+  end: number;
+  zoomScale?: number;
+}
+
 interface BackgroundPreset {
   id: string;
   name: string;
@@ -100,9 +108,69 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(recording.duration || 15);
+  const [videoWidth, setVideoWidth] = useState(1920);
+  const [videoHeight, setVideoHeight] = useState(1080);
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [exportError, setExportError] = useState<string | null>(null);
+
+  // Timeline Segments States
+  const [segments, setSegments] = useState<TimelineSegment[]>([]);
+  const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
+
+  const handleAddTrimSegment = () => {
+    const start = currentTime;
+    const end = Math.min(duration, currentTime + 2);
+    const newSegment: TimelineSegment = {
+      id: `seg-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      type: 'trim',
+      start,
+      end,
+    };
+    setSegments(prev => [...prev, newSegment]);
+    setSelectedSegmentId(newSegment.id);
+  };
+
+  const handleAddZoomSegment = () => {
+    const start = currentTime;
+    const end = Math.min(duration, currentTime + 2);
+    const newSegment: TimelineSegment = {
+      id: `seg-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      type: 'zoom',
+      start,
+      end,
+      zoomScale: 1.4,
+    };
+    setSegments(prev => [...prev, newSegment]);
+    setSelectedSegmentId(newSegment.id);
+  };
+
+  const handleDeleteSegment = (id: string) => {
+    setSegments(prev => prev.filter(seg => seg.id !== id));
+    if (selectedSegmentId === id) {
+      setSelectedSegmentId(null);
+    }
+  };
+
+  const handleAdjustSegmentTime = (id: string, field: 'start' | 'end', delta: number) => {
+    setSegments(prev => prev.map(seg => {
+      if (seg.id !== id) return seg;
+      if (field === 'start') {
+        const newStart = Math.max(0, Math.min(seg.end - 0.2, seg.start + delta));
+        return { ...seg, start: Number(newStart.toFixed(1)) };
+      } else {
+        const newEnd = Math.max(seg.start + 0.2, Math.min(duration, seg.end + delta));
+        return { ...seg, end: Number(newEnd.toFixed(1)) };
+      }
+    }));
+  };
+
+  const handleAdjustZoomScale = (id: string, scale: number) => {
+    setSegments(prev => prev.map(seg => {
+      if (seg.id !== id) return seg;
+      return { ...seg, zoomScale: scale };
+    }));
+  };
 
   // Filter presets based on selected tab
   const filteredPresets = PRESETS.filter(p => p.type === activeTab);
@@ -111,8 +179,25 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
   const handleLoadedMetadata = () => {
     if (videoRef.current) {
       setDuration(videoRef.current.duration || recording.duration || 15);
+      if (videoRef.current.videoWidth) {
+        setVideoWidth(videoRef.current.videoWidth);
+        setVideoHeight(videoRef.current.videoHeight);
+      }
     }
   };
+
+  // Robustly verify and set metadata on mount/recording change
+  useEffect(() => {
+    if (videoRef.current) {
+      if (videoRef.current.readyState >= 1) {
+        setDuration(videoRef.current.duration || recording.duration || 15);
+        if (videoRef.current.videoWidth) {
+          setVideoWidth(videoRef.current.videoWidth);
+          setVideoHeight(videoRef.current.videoHeight);
+        }
+      }
+    }
+  }, [recording]);
 
   const togglePlay = () => {
     if (videoRef.current) {
@@ -164,9 +249,15 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
     chromeStyle: WindowChromeId,
     radius: number,
     shadowBlurVal: number,
-    blurLevel: ImageBlurLevel
+    blurLevel: ImageBlurLevel,
+    isActiveZoom?: boolean,
+    activeZoomScale?: number
   ) => {
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+    // Force high quality smoothing for crisp and clear video scaling
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
 
     // Save context for entire background rendering
     ctx.save();
@@ -485,7 +576,16 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
 
     // --- 5. DRAW ACTIVE VIDEO FRAME ---
     if (videoEl && videoEl.readyState >= 2) {
-      ctx.drawImage(videoEl, videoX, videoY, drawW, drawH);
+      if (isActiveZoom) {
+        const scale = activeZoomScale || 1.4;
+        const sw = rawVideoW / scale;
+        const sh = rawVideoH / scale;
+        const sx = (rawVideoW - sw) / 2;
+        const sy = (rawVideoH - sh) / 2;
+        ctx.drawImage(videoEl, sx, sy, sw, sh, videoX, videoY, drawW, drawH);
+      } else {
+        ctx.drawImage(videoEl, videoX, videoY, drawW, drawH);
+      }
     } else {
       // Background inside clip until frame loads
       ctx.fillStyle = '#18181b';
@@ -511,6 +611,8 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
       if (canvas && video) {
         const ctx = canvas.getContext('2d');
         if (ctx) {
+          const t = video.currentTime;
+          const activeZoom = segments.find(s => s.type === 'zoom' && t >= s.start && t < s.end);
           drawFrameToCanvas(
             ctx,
             canvas.width,
@@ -521,7 +623,9 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
             windowChrome,
             cornerRadius,
             shadowIntensity,
-            imageBlur
+            imageBlur,
+            !!activeZoom,
+            activeZoom?.zoomScale
           );
         }
       }
@@ -530,11 +634,18 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
 
     render();
     return () => cancelAnimationFrame(animId);
-  }, [selectedBg, activeTab, paddingSize, windowChrome, cornerRadius, shadowIntensity, aspectRatio, imageBlur, customImageEl]);
+  }, [selectedBg, activeTab, paddingSize, windowChrome, cornerRadius, shadowIntensity, aspectRatio, imageBlur, customImageEl, segments, videoWidth, videoHeight]);
 
   const handleTimeUpdate = () => {
     if (videoRef.current) {
-      setCurrentTime(videoRef.current.currentTime);
+      const t = videoRef.current.currentTime;
+      const activeTrim = segments.find(s => s.type === 'trim' && t >= s.start && t < s.end);
+      if (activeTrim) {
+        videoRef.current.currentTime = activeTrim.end;
+        setCurrentTime(activeTrim.end);
+      } else {
+        setCurrentTime(t);
+      }
     }
   };
 
@@ -573,19 +684,38 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
         exportVideo.onerror = () => reject(new Error('Failed to load video source for rendering'));
       });
 
-      // Target Canvas Output resolution based on Aspect Ratio selection
+      // Target Canvas Output resolution based on Aspect Ratio selection (supporting high-DPI/native upscale)
       let outW = 1920;
       let outH = 1080;
+      const vWidth = exportVideo.videoWidth || 1920;
+      const vHeight = exportVideo.videoHeight || 1080;
+      const maxDim = Math.max(vWidth, vHeight);
 
       if (aspectRatio === '9-16') {
         outW = 1080;
         outH = 1920;
+        if (maxDim > 1920) {
+          outH = maxDim;
+          outW = Math.round(maxDim * 9 / 16);
+        }
       } else if (aspectRatio === '1-1') {
         outW = 1080;
         outH = 1080;
+        if (maxDim > 1080) {
+          outW = maxDim;
+          outH = maxDim;
+        }
       } else if (aspectRatio === 'original') {
-        outW = exportVideo.videoWidth || 1920;
-        outH = exportVideo.videoHeight || 1080;
+        outW = vWidth;
+        outH = vHeight;
+      } else {
+        // 16-9
+        outW = 1920;
+        outH = 1080;
+        if (maxDim > 1920) {
+          outW = maxDim;
+          outH = Math.round(maxDim * 9 / 16);
+        }
       }
 
       const exportCanvas = document.createElement('canvas');
@@ -593,6 +723,8 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
       exportCanvas.height = outH;
       const exportCtx = exportCanvas.getContext('2d');
       if (!exportCtx) throw new Error('Could not initialize canvas rendering context.');
+      exportCtx.imageSmoothingEnabled = true;
+      exportCtx.imageSmoothingQuality = 'high';
 
       // Capture audio context
       const audioContextClass = window.AudioContext || (window as any).webkitAudioContext;
@@ -666,6 +798,15 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
           return;
         }
 
+        const currentT = exportVideo.currentTime;
+        const activeTrim = segments.find(s => s.type === 'trim' && currentT >= s.start && currentT < s.end);
+        if (activeTrim) {
+          exportVideo.currentTime = activeTrim.end;
+          return;
+        }
+
+        const activeZoom = segments.find(s => s.type === 'zoom' && currentT >= s.start && currentT < s.end);
+
         // Render high-res compiled frame
         drawFrameToCanvas(
           exportCtx,
@@ -677,7 +818,9 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
           windowChrome,
           cornerRadius,
           shadowIntensity,
-          imageBlur
+          imageBlur,
+          !!activeZoom,
+          activeZoom?.zoomScale
         );
 
         // Progress calculation
@@ -741,6 +884,38 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
     setPaddingSize(prev => prev >= 100 ? 20 : prev + 25);
   };
 
+  // Dynamic high-fidelity resolution for preview canvas
+  let previewW = 1920;
+  let previewH = 1080;
+  const maxDim = Math.max(videoWidth, videoHeight);
+
+  if (aspectRatio === '9-16') {
+    previewW = 1080;
+    previewH = 1920;
+    if (maxDim > 1920) {
+      previewH = maxDim;
+      previewW = Math.round(maxDim * 9 / 16);
+    }
+  } else if (aspectRatio === '1-1') {
+    previewW = 1080;
+    previewH = 1080;
+    if (maxDim > 1080) {
+      previewW = maxDim;
+      previewH = maxDim;
+    }
+  } else if (aspectRatio === 'original') {
+    previewW = videoWidth || 1920;
+    previewH = videoHeight || 1080;
+  } else {
+    // 16-9
+    previewW = 1920;
+    previewH = 1080;
+    if (maxDim > 1920) {
+      previewW = maxDim;
+      previewH = Math.round(maxDim * 9 / 16);
+    }
+  }
+
   return (
     <div className="flex flex-col h-full w-full overflow-hidden bg-brand-bg text-brand-text font-sans animate-fade-in" id="canvas-studio-workspace">
       
@@ -797,8 +972,8 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
             >
               <canvas
                 ref={canvasRef}
-                width={1280}
-                height={720}
+                width={previewW}
+                height={previewH}
                 className="max-h-full max-w-full object-contain bg-black"
                 id="render-canvas"
               />
@@ -884,11 +1059,21 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
             <div className="flex items-center justify-between pb-0.5" id="timeline-toolbar">
               <div className="flex items-center space-x-1.5">
                 <button 
-                  onClick={handleAddZoom}
-                  className="flex items-center space-x-1 px-2.5 py-1 bg-brand-surface border border-brand-border hover:bg-brand-surface/80 text-brand-text text-[11px] font-semibold rounded-lg transition-colors"
+                  onClick={handleAddTrimSegment}
+                  className="flex items-center space-x-1 px-3 py-1.5 bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500/20 text-rose-500 hover:text-rose-600 text-[11px] font-bold rounded-lg transition-colors"
+                  title="Cut out/exclude a region from the video"
                 >
-                  <Plus size={11} />
-                  <span>Add a segment</span>
+                  <Scissors size={11} />
+                  <span>✂️ Trim</span>
+                </button>
+
+                <button 
+                  onClick={handleAddZoomSegment}
+                  className="flex items-center space-x-1 px-3 py-1.5 bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 text-amber-500 hover:text-amber-600 text-[11px] font-bold rounded-lg transition-colors"
+                  title="Apply zoom enhancement to a range"
+                >
+                  <Search size={11} />
+                  <span>🔍 Zoom</span>
                 </button>
 
                 <div className="h-4 w-[1px] bg-brand-border mx-1" />
@@ -918,16 +1103,15 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
                   <Search size={12} className="opacity-100" />
                 </button>
 
-                <button className="p-1 hover:bg-rose-50 rounded-lg text-brand-text-muted hover:text-rose-500 transition-colors" title="Delete Clip">
+                <button 
+                  onClick={() => {
+                    setSegments([]);
+                    setSelectedSegmentId(null);
+                  }}
+                  className="p-1 hover:bg-rose-50 rounded-lg text-brand-text-muted hover:text-rose-500 transition-colors" 
+                  title="Clear All Segments"
+                >
                   <Trash2 size={12} />
-                </button>
-
-                <button className="p-1 hover:bg-brand-surface rounded-lg text-brand-text-muted hover:text-brand-text transition-colors" title="Undo">
-                  <Undo2 size={12} />
-                </button>
-
-                <button className="p-1 hover:bg-brand-surface rounded-lg text-brand-text-muted hover:text-brand-text transition-colors" title="Redo">
-                  <Redo2 size={12} />
                 </button>
               </div>
 
@@ -947,7 +1131,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
             <div 
               ref={timelineRef}
               onClick={handleTimelineClick}
-              className="relative bg-brand-surface/20 border border-brand-border/60 rounded-lg p-2.5 min-h-[75px] select-none overflow-x-hidden cursor-ew-resize"
+              className="relative bg-brand-surface/20 border border-brand-border/60 rounded-lg p-2.5 min-h-[90px] select-none overflow-x-hidden cursor-ew-resize"
               id="timeline-track-view"
             >
               {/* Top row: time tick markings */}
@@ -956,7 +1140,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
               </div>
 
               {/* Bottom row: visual video track representation */}
-              <div className="relative mt-2.5 h-8 w-full bg-brand-surface/55 rounded-md border border-brand-border overflow-hidden flex items-center justify-center">
+              <div className="relative mt-2.5 h-10 w-full bg-brand-surface/55 rounded-md border border-brand-border overflow-hidden flex items-center justify-center">
                 <div className="absolute inset-y-0 left-0 bg-brand-accent/5 w-full flex items-center pl-4 font-mono text-[10px] text-brand-text-muted font-semibold select-none">
                   {recording.name} (Source Capture)
                 </div>
@@ -971,17 +1155,147 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
                     />
                   ))}
                 </div>
+
+                {/* --- RENDER TIMELINE SEGMENTS OVER THE TRACK --- */}
+                {segments.map((seg) => {
+                  const leftPct = (seg.start / duration) * 100;
+                  const widthPct = ((seg.end - seg.start) / duration) * 100;
+                  const isSelected = selectedSegmentId === seg.id;
+                  
+                  return (
+                    <div
+                      key={seg.id}
+                      onClick={(e) => {
+                        e.stopPropagation(); // prevent seek
+                        setSelectedSegmentId(seg.id);
+                      }}
+                      className={`absolute inset-y-0.5 rounded-md flex items-center justify-between px-2 cursor-pointer transition-all border text-[10px] font-semibold select-none z-20 ${
+                        seg.type === 'trim'
+                          ? isSelected
+                            ? 'bg-rose-500/35 border-rose-500 text-rose-100 ring-2 ring-rose-400'
+                            : 'bg-rose-500/20 border-rose-500/55 text-rose-200 hover:bg-rose-500/30'
+                          : isSelected
+                            ? 'bg-amber-500/35 border-amber-500 text-amber-100 ring-2 ring-amber-400'
+                            : 'bg-amber-500/20 border-amber-500/55 text-amber-200 hover:bg-amber-500/30'
+                      }`}
+                      style={{
+                        left: `${leftPct}%`,
+                        width: `${widthPct}%`,
+                      }}
+                    >
+                      <span className="truncate flex items-center space-x-1">
+                        {seg.type === 'trim' ? (
+                          <>
+                            <Scissors size={10} className="shrink-0 text-rose-300" />
+                            <span>Trimmed Range</span>
+                          </>
+                        ) : (
+                          <>
+                            <Search size={10} className="shrink-0 text-amber-300" />
+                            <span>Zoom {seg.zoomScale || 1.4}x</span>
+                          </>
+                        )}
+                      </span>
+                      {isSelected && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteSegment(seg.id);
+                          }}
+                          className="p-0.5 hover:bg-black/30 rounded text-white"
+                          title="Delete segment"
+                        >
+                          <Trash2 size={10} />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
 
               {/* brand-accent Playhead Line indicating current position */}
               <div 
-                className="absolute top-0 bottom-0 w-[2px] bg-brand-accent pointer-events-none z-10 transition-all duration-75"
+                className="absolute top-0 bottom-0 w-[2px] bg-brand-accent pointer-events-none z-30 transition-all duration-75"
                 style={{ left: `${(currentTime / (duration || 1)) * 100}%` }}
               >
                 {/* Triangular head badge */}
                 <div className="absolute -top-1 -left-[5px] w-[12px] h-[12px] bg-brand-accent clip-triangle shadow-xs" style={{ clipPath: 'polygon(50% 100%, 0 0, 100% 0)' }} />
               </div>
             </div>
+
+            {/* If a segment is selected, show its editing sub-panel */}
+            {(() => {
+              const selectedSeg = segments.find(s => s.id === selectedSegmentId);
+              if (!selectedSeg) return null;
+              return (
+                <div className="bg-brand-surface border border-brand-border rounded-lg p-2.5 flex flex-wrap gap-3 items-center justify-between text-xs animate-fade-in mt-2" id="segment-settings-hud">
+                  <div className="flex items-center space-x-2">
+                    <span className={`w-2.5 h-2.5 rounded-full ${selectedSeg.type === 'trim' ? 'bg-rose-500' : 'bg-amber-500'}`} />
+                    <span className="font-bold text-brand-text capitalize text-[11px]">{selectedSeg.type} Segment Controls</span>
+                  </div>
+                  
+                  <div className="flex items-center space-x-4">
+                    {/* Start adjustment */}
+                    <div className="flex items-center space-x-1">
+                      <span className="text-brand-text-muted text-[11px]">Start:</span>
+                      <button 
+                        type="button"
+                        onClick={() => handleAdjustSegmentTime(selectedSeg.id, 'start', -0.1)}
+                        className="px-1 py-0.5 bg-brand-card border border-brand-border rounded hover:bg-brand-surface text-[10px] font-mono"
+                      >-0.1s</button>
+                      <span className="font-mono font-bold w-12 text-center text-brand-text">{selectedSeg.start.toFixed(1)}s</span>
+                      <button 
+                        type="button"
+                        onClick={() => handleAdjustSegmentTime(selectedSeg.id, 'start', 0.1)}
+                        className="px-1 py-0.5 bg-brand-card border border-brand-border rounded hover:bg-brand-surface text-[10px] font-mono"
+                      >+0.1s</button>
+                    </div>
+
+                    {/* End adjustment */}
+                    <div className="flex items-center space-x-1">
+                      <span className="text-brand-text-muted text-[11px]">End:</span>
+                      <button 
+                        type="button"
+                        onClick={() => handleAdjustSegmentTime(selectedSeg.id, 'end', -0.1)}
+                        className="px-1 py-0.5 bg-brand-card border border-brand-border rounded hover:bg-brand-surface text-[10px] font-mono"
+                      >-0.1s</button>
+                      <span className="font-mono font-bold w-12 text-center text-brand-text">{selectedSeg.end.toFixed(1)}s</span>
+                      <button 
+                        type="button"
+                        onClick={() => handleAdjustSegmentTime(selectedSeg.id, 'end', 0.1)}
+                        className="px-1 py-0.5 bg-brand-card border border-brand-border rounded hover:bg-brand-surface text-[10px] font-mono"
+                      >+0.1s</button>
+                    </div>
+
+                    {/* Zoom scale slider */}
+                    {selectedSeg.type === 'zoom' && (
+                      <div className="flex items-center space-x-1">
+                        <span className="text-brand-text-muted text-[11px]">Factor:</span>
+                        <input 
+                          type="range"
+                          min={1.1}
+                          max={2.5}
+                          step={0.1}
+                          value={selectedSeg.zoomScale || 1.4}
+                          onChange={(e) => handleAdjustZoomScale(selectedSeg.id, parseFloat(e.target.value))}
+                          className="w-16 h-1 bg-brand-card rounded accent-brand-accent cursor-pointer"
+                        />
+                        <span className="font-mono font-bold w-8 text-[11px]">{(selectedSeg.zoomScale || 1.4).toFixed(1)}x</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteSegment(selectedSeg.id)}
+                    className="flex items-center space-x-1 px-2 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 rounded-md text-[10px] font-bold transition-all"
+                  >
+                    <Trash2 size={10} />
+                    <span>Remove Segment</span>
+                  </button>
+                </div>
+              );
+            })()}
           </div>
 
           {/* Compile errors display */}
@@ -1158,26 +1472,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
               </div>
             </div>
 
-            {/* 3. IMAGE BLUR VALUE */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-bold uppercase tracking-wider text-brand-text-muted/80 block">Image blur</label>
-              
-              <div className="relative">
-                <select
-                  value={imageBlur}
-                  onChange={(e) => setImageBlur(e.target.value as ImageBlurLevel)}
-                  className="w-full px-2.5 py-1.5 bg-brand-surface hover:bg-brand-surface/80 border border-brand-border rounded-lg text-xs font-semibold text-brand-text outline-none appearance-none cursor-pointer focus:border-brand-accent transition-all"
-                >
-                  <option value="none">None</option>
-                  <option value="low">Low Blur (12px)</option>
-                  <option value="moderate">Moderate Blur (28px)</option>
-                  <option value="high">High Blur (60px)</option>
-                </select>
-                <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-brand-text-muted">
-                  <ChevronDown size={14} />
-                </div>
-              </div>
-            </div>
+
 
             {/* 4. MARGINS AND CORNERS SLIDERS */}
             <div className="space-y-3 pt-0.5">
@@ -1263,18 +1558,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
 
           </div>
 
-          {/* 5. ADD ZOOM ACTION BUTTON */}
-          <div className="pt-3 border-t border-brand-border shrink-0" id="zoom-action-block">
-            <button
-              type="button"
-              onClick={handleAddZoom}
-              className="w-full flex items-center justify-center space-x-1.5 py-2.5 bg-brand-accent hover:bg-brand-accent-hover active:scale-[0.98] text-white text-[11px] font-bold rounded-xl shadow-xs transition-all cursor-pointer"
-              id="add-zoom-btn"
-            >
-              <Plus size={14} />
-              <span>Add Zoom</span>
-            </button>
-          </div>
+
 
         </div>
 
