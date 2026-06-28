@@ -742,10 +742,10 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-brand-bg text-brand-text font-sans animate-fade-in" id="canvas-studio-workspace">
+    <div className="fixed inset-0 z-50 flex flex-col h-screen w-screen overflow-hidden bg-brand-bg text-brand-text font-sans animate-fade-in" id="canvas-studio-workspace">
       
       {/* 1. TOP HEADER NAVIGATION BAR */}
-      <div className="flex items-center justify-between px-6 py-3.5 border-b border-brand-border bg-brand-card" id="studio-header">
+      <div className="flex items-center justify-between px-6 py-3 border-b border-brand-border bg-brand-card h-14 shrink-0" id="studio-header">
         <button
           onClick={onBack}
           className="flex items-center space-x-2 text-sm font-semibold text-brand-text-muted hover:text-brand-text transition-colors"
@@ -778,13 +778,13 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
       </div>
 
       {/* 2. DUAL COLUMN CONTENT CANVAS & SETTINGS */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 flex-1" id="studio-grid">
+      <div className="grid grid-cols-1 lg:grid-cols-12 h-[calc(100vh-56px)] overflow-hidden" id="studio-grid">
         
         {/* LEFT COLUMN: ACTIVE VIEWING CANVAS & PLAYBACK TIMELINE (9 COLS) */}
-        <div className="lg:col-span-9 p-6 flex flex-col space-y-4" id="studio-editor-pane">
+        <div className="lg:col-span-9 p-4 flex flex-col space-y-3 h-full overflow-hidden" id="studio-editor-pane">
           
           {/* Canvas Presentation Frame */}
-          <div className="relative flex-1 bg-brand-surface/40 rounded-2xl border border-brand-border flex items-center justify-center p-8 min-h-[340px] shadow-inner" id="canvas-presentation-frame">
+          <div className="relative flex-1 min-h-0 bg-brand-surface/40 rounded-2xl border border-brand-border flex items-center justify-center p-4 shadow-inner overflow-hidden" id="canvas-presentation-frame">
             
             {/* Aspect ratio-sensitive scaling container */}
             <div 
@@ -829,7 +829,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
           </div>
 
           {/* PLAYBACK CONTROL HUD BAR */}
-          <div className="flex items-center space-x-4 px-4 py-3 bg-brand-card border border-brand-border rounded-xl shadow-sm" id="playback-controls-hud">
+          <div className="flex items-center space-x-4 px-4 py-2.5 bg-brand-card border border-brand-border rounded-xl shadow-sm shrink-0" id="playback-controls-hud">
             {/* Play Trigger */}
             <button
               onClick={togglePlay}
@@ -878,14 +878,14 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
           </div>
 
           {/* TIMELINE EDIT PANEL WORKSPACE */}
-          <div className="bg-brand-card border border-brand-border rounded-xl p-4 shadow-sm space-y-3" id="timeline-panel">
+          <div className="bg-brand-card border border-brand-border rounded-xl p-3 shadow-sm space-y-2 shrink-0" id="timeline-panel">
             
             {/* Toolbar Buttons row */}
-            <div className="flex items-center justify-between pb-1" id="timeline-toolbar">
+            <div className="flex items-center justify-between pb-0.5" id="timeline-toolbar">
               <div className="flex items-center space-x-1.5">
                 <button 
                   onClick={handleAddZoom}
-                  className="flex items-center space-x-1 px-3 py-1.5 bg-brand-surface border border-brand-border hover:bg-brand-surface/80 text-brand-text text-[11px] font-semibold rounded-lg transition-colors"
+                  className="flex items-center space-x-1 px-2.5 py-1 bg-brand-surface border border-brand-border hover:bg-brand-surface/80 text-brand-text text-[11px] font-semibold rounded-lg transition-colors"
                 >
                   <Plus size={11} />
                   <span>Add a segment</span>
@@ -894,7 +894,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
                 <div className="h-4 w-[1px] bg-brand-border mx-1" />
 
                 <button 
-                  className="p-1.5 hover:bg-brand-surface rounded-lg text-brand-text-muted hover:text-brand-text transition-colors"
+                  className="p-1 hover:bg-brand-surface rounded-lg text-brand-text-muted hover:text-brand-text transition-colors"
                   title="Zoom Out"
                   onClick={() => setZoomLevel(prev => Math.max(1, prev - 1))}
                 >
@@ -911,22 +911,22 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
                 />
 
                 <button 
-                  className="p-1.5 hover:bg-brand-surface rounded-lg text-brand-text-muted hover:text-brand-text transition-colors"
+                  className="p-1 hover:bg-brand-surface rounded-lg text-brand-text-muted hover:text-brand-text transition-colors"
                   title="Zoom In"
                   onClick={() => setZoomLevel(prev => Math.min(10, prev + 1))}
                 >
                   <Search size={12} className="opacity-100" />
                 </button>
 
-                <button className="p-1.5 hover:bg-rose-50 rounded-lg text-brand-text-muted hover:text-rose-500 transition-colors" title="Delete Clip">
+                <button className="p-1 hover:bg-rose-50 rounded-lg text-brand-text-muted hover:text-rose-500 transition-colors" title="Delete Clip">
                   <Trash2 size={12} />
                 </button>
 
-                <button className="p-1.5 hover:bg-brand-surface rounded-lg text-brand-text-muted hover:text-brand-text transition-colors" title="Undo">
+                <button className="p-1 hover:bg-brand-surface rounded-lg text-brand-text-muted hover:text-brand-text transition-colors" title="Undo">
                   <Undo2 size={12} />
                 </button>
 
-                <button className="p-1.5 hover:bg-brand-surface rounded-lg text-brand-text-muted hover:text-brand-text transition-colors" title="Redo">
+                <button className="p-1 hover:bg-brand-surface rounded-lg text-brand-text-muted hover:text-brand-text transition-colors" title="Redo">
                   <Redo2 size={12} />
                 </button>
               </div>
@@ -936,7 +936,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
                   if (videoRef.current) videoRef.current.currentTime = 0;
                   setCurrentTime(0);
                 }}
-                className="flex items-center space-x-1 px-2.5 py-1.5 bg-brand-surface border border-brand-border hover:bg-brand-surface/80 text-brand-text-muted text-[11px] font-semibold rounded-lg transition-colors"
+                className="flex items-center space-x-1 px-2 py-1 bg-brand-surface border border-brand-border hover:bg-brand-surface/80 text-brand-text-muted text-[11px] font-semibold rounded-lg transition-colors"
               >
                 <RotateCcw size={11} />
                 <span>Reset timeline</span>
@@ -947,16 +947,16 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
             <div 
               ref={timelineRef}
               onClick={handleTimelineClick}
-              className="relative bg-brand-surface/20 border border-brand-border/60 rounded-lg p-3 min-h-[90px] select-none overflow-x-hidden cursor-ew-resize"
+              className="relative bg-brand-surface/20 border border-brand-border/60 rounded-lg p-2.5 min-h-[75px] select-none overflow-x-hidden cursor-ew-resize"
               id="timeline-track-view"
             >
               {/* Top row: time tick markings */}
-              <div className="relative h-6 w-full border-b border-brand-border/60">
+              <div className="relative h-5 w-full border-b border-brand-border/60">
                 {renderTimelineTicks()}
               </div>
 
               {/* Bottom row: visual video track representation */}
-              <div className="relative mt-3 h-10 w-full bg-brand-surface/55 rounded-md border border-brand-border overflow-hidden flex items-center justify-center">
+              <div className="relative mt-2.5 h-8 w-full bg-brand-surface/55 rounded-md border border-brand-border overflow-hidden flex items-center justify-center">
                 <div className="absolute inset-y-0 left-0 bg-brand-accent/5 w-full flex items-center pl-4 font-mono text-[10px] text-brand-text-muted font-semibold select-none">
                   {recording.name} (Source Capture)
                 </div>
@@ -967,7 +967,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
                     <div 
                       key={i} 
                       className="w-[3px] bg-brand-text rounded-full" 
-                      style={{ height: `${20 + Math.sin(i * 0.4) * 15}px` }}
+                      style={{ height: `${16 + Math.sin(i * 0.4) * 10}px` }}
                     />
                   ))}
                 </div>
@@ -986,7 +986,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
 
           {/* Compile errors display */}
           {exportError && (
-            <div className="flex items-start space-x-1.5 p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 animate-fade-in">
+            <div className="flex items-start space-x-1.5 p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 animate-fade-in shrink-0">
               <AlertCircle size={15} className="mt-0.5 shrink-0 text-rose-600" />
               <div>
                 <span className="font-semibold">Rendering Matrix Error:</span>
@@ -997,7 +997,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
 
           {/* Export process banner */}
           {isExporting && (
-            <div className="p-4 bg-brand-card border border-brand-border rounded-xl space-y-2 animate-pulse shadow-sm">
+            <div className="p-4 bg-brand-card border border-brand-border rounded-xl space-y-2 animate-pulse shadow-sm shrink-0">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-brand-text-muted font-semibold flex items-center space-x-1.5">
                   <RefreshCw size={12} className="animate-spin text-brand-accent" />
@@ -1017,32 +1017,34 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
         </div>
 
         {/* RIGHT COLUMN: CANVAS SETTINGS SIDEBAR (3 COLS) */}
-        <div className="lg:col-span-3 bg-brand-card border-l border-brand-border p-6 flex flex-col justify-between h-full overflow-y-auto" id="studio-sidebar">
+        <div className="lg:col-span-3 bg-brand-card border-l border-brand-border p-4 flex flex-col h-full overflow-hidden" id="studio-sidebar">
           
-          <div className="space-y-6">
-            {/* Sidebar header */}
-            <div className="flex items-center justify-between pb-4 border-b border-brand-border">
-              <div className="flex items-center space-x-2">
-                <Settings size={18} className="text-brand-text animate-spin-slow" />
-                <h3 className="font-semibold text-brand-text text-sm">Canvas Settings</h3>
-              </div>
-              <button className="text-brand-text-muted hover:text-brand-text transition-colors">
-                <MoreVertical size={16} />
-              </button>
+          {/* Sidebar header */}
+          <div className="flex items-center justify-between pb-3 border-b border-brand-border shrink-0">
+            <div className="flex items-center space-x-2">
+              <Settings size={16} className="text-brand-text animate-spin-slow" />
+              <h3 className="font-semibold text-brand-text text-xs">Canvas Settings</h3>
             </div>
+            <button className="text-brand-text-muted hover:text-brand-text transition-colors">
+              <MoreVertical size={14} />
+            </button>
+          </div>
 
+          {/* Scrollable Settings Area */}
+          <div className="flex-1 overflow-y-auto space-y-4 py-3 pr-1" id="studio-sidebar-settings">
+            
             {/* 1. ASPECT RATIO BOX */}
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <span className="text-[10px] font-bold uppercase tracking-wider text-brand-text-muted/80 block">Canvas</span>
               
-              <div className="space-y-1.5">
+              <div className="space-y-1">
                 <label className="text-[11px] font-semibold text-brand-text block">Aspect Ratio</label>
                 
                 <div className="relative">
                   <select
                     value={aspectRatio}
                     onChange={(e) => setAspectRatio(e.target.value as AspectRatioId)}
-                    className="w-full px-3 py-2 bg-brand-surface hover:bg-brand-surface/80 border border-brand-border rounded-lg text-xs font-semibold text-brand-text outline-none appearance-none cursor-pointer focus:border-brand-accent transition-all"
+                    className="w-full px-2.5 py-1.5 bg-brand-surface hover:bg-brand-surface/80 border border-brand-border rounded-lg text-xs font-semibold text-brand-text outline-none appearance-none cursor-pointer focus:border-brand-accent transition-all"
                   >
                     <option value="original">Original Aspect Ratio</option>
                     <option value="16-9">16:9 Landscape</option>
@@ -1057,7 +1059,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
             </div>
 
             {/* 2. BACKGROUND SELECTOR */}
-            <div className="space-y-3.5">
+            <div className="space-y-2.5">
               <span className="text-[10px] font-bold uppercase tracking-wider text-brand-text-muted/80 block">Background</span>
               
               {/* Category Segmented Controls */}
@@ -1065,7 +1067,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
                 <button
                   type="button"
                   onClick={() => { setActiveTab('image'); setSelectedBg('macos-sonoma'); }}
-                  className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-[10px] font-bold transition-all duration-150 ${
+                  className={`flex-1 flex items-center justify-center space-x-1 py-1 rounded-md text-[10px] font-bold transition-all duration-150 ${
                     activeTab === 'image' ? 'bg-brand-accent text-white shadow-sm' : 'text-brand-text-muted hover:text-brand-text'
                   }`}
                 >
@@ -1075,17 +1077,17 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
                 <button
                   type="button"
                   onClick={() => { setActiveTab('gradient'); setSelectedBg('sunset-aurora'); }}
-                  className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-[10px] font-bold transition-all duration-150 ${
+                  className={`flex-1 flex items-center justify-center space-x-1 py-1 rounded-md text-[10px] font-bold transition-all duration-150 ${
                     activeTab === 'gradient' ? 'bg-brand-accent text-white shadow-sm' : 'text-brand-text-muted hover:text-brand-text'
                   }`}
                 >
                   <Palette size={10} />
-                  <span>Gradient</span>
+                  <span>Grad</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => { setActiveTab('color'); setSelectedBg('flat-white'); }}
-                  className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-[10px] font-bold transition-all duration-150 ${
+                  className={`flex-1 flex items-center justify-center space-x-1 py-1 rounded-md text-[10px] font-bold transition-all duration-150 ${
                     activeTab === 'color' ? 'bg-brand-accent text-white shadow-sm' : 'text-brand-text-muted hover:text-brand-text'
                   }`}
                 >
@@ -1095,7 +1097,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
                 <button
                   type="button"
                   onClick={() => { setActiveTab('none'); setSelectedBg('none'); }}
-                  className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-[10px] font-bold transition-all duration-150 ${
+                  className={`flex-1 flex items-center justify-center space-x-1 py-1 rounded-md text-[10px] font-bold transition-all duration-150 ${
                     activeTab === 'none' ? 'bg-brand-accent text-white shadow-sm' : 'text-brand-text-muted hover:text-brand-text'
                   }`}
                 >
@@ -1106,7 +1108,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
 
               {/* Backdrop Presets Grid */}
               {activeTab !== 'none' && (
-                <div className="grid grid-cols-4 gap-2" id="backdrop-presets-grid">
+                <div className="grid grid-cols-4 gap-1.5" id="backdrop-presets-grid">
                   {filteredPresets.map((preset) => {
                     const isSelected = selectedBg === preset.id;
                     return (
@@ -1137,11 +1139,11 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
               )}
 
               {/* Custom uploader trigger widget */}
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <button
                   type="button"
                   onClick={triggerCustomImageUpload}
-                  className="w-full flex items-center justify-center space-x-1.5 py-2.5 bg-brand-surface hover:bg-brand-surface/85 border border-dashed border-brand-border rounded-lg text-brand-text-muted text-[11px] font-semibold transition-all cursor-pointer"
+                  className="w-full flex items-center justify-center space-x-1.5 py-2 bg-brand-surface hover:bg-brand-surface/85 border border-dashed border-brand-border rounded-lg text-brand-text-muted text-[11px] font-semibold transition-all cursor-pointer"
                 >
                   <Upload size={12} />
                   <span>{customImageName ? `Change: ${customImageName.substring(0, 15)}...` : 'Upload custom image'}</span>
@@ -1157,14 +1159,14 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
             </div>
 
             {/* 3. IMAGE BLUR VALUE */}
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <label className="text-[11px] font-bold uppercase tracking-wider text-brand-text-muted/80 block">Image blur</label>
               
               <div className="relative">
                 <select
                   value={imageBlur}
                   onChange={(e) => setImageBlur(e.target.value as ImageBlurLevel)}
-                  className="w-full px-3 py-2 bg-brand-surface hover:bg-brand-surface/80 border border-brand-border rounded-lg text-xs font-semibold text-brand-text outline-none appearance-none cursor-pointer focus:border-brand-accent transition-all"
+                  className="w-full px-2.5 py-1.5 bg-brand-surface hover:bg-brand-surface/80 border border-brand-border rounded-lg text-xs font-semibold text-brand-text outline-none appearance-none cursor-pointer focus:border-brand-accent transition-all"
                 >
                   <option value="none">None</option>
                   <option value="low">Low Blur (12px)</option>
@@ -1178,9 +1180,9 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
             </div>
 
             {/* 4. MARGINS AND CORNERS SLIDERS */}
-            <div className="space-y-4 pt-1">
+            <div className="space-y-3 pt-0.5">
               {/* Padding */}
-              <div className="space-y-1.5">
+              <div className="space-y-1">
                 <div className="flex justify-between text-[11px]">
                   <span className="font-bold uppercase tracking-wider text-brand-text-muted/80">Padding</span>
                   <span className="font-mono font-bold text-brand-text">{paddingSize}px</span>
@@ -1197,7 +1199,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
               </div>
 
               {/* Corner Roundedness */}
-              <div className="space-y-1.5">
+              <div className="space-y-1">
                 <div className="flex justify-between text-[11px]">
                   <span className="font-bold uppercase tracking-wider text-brand-text-muted/80">Corners</span>
                   <span className="font-mono font-bold text-brand-text">{cornerRadius}px</span>
@@ -1214,9 +1216,9 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
               </div>
 
               {/* Simulated Window Chrome Frame Type */}
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <label className="text-[11px] font-bold uppercase tracking-wider text-brand-text-muted/80 block">Window Header Style</label>
-                <div className="grid grid-cols-2 gap-1.5">
+                <div className="grid grid-cols-2 gap-1">
                   {(['none', 'macos-dark', 'macos-light', 'windows-dark', 'windows-light'] as WindowChromeId[]).map((chrome) => {
                     const isActive = windowChrome === chrome;
                     return (
@@ -1224,7 +1226,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
                         key={chrome}
                         type="button"
                         onClick={() => setWindowChrome(chrome)}
-                        className={`py-1.5 px-2 rounded-lg border text-[9px] font-bold text-center transition-all ${
+                        className={`py-1 px-1.5 rounded-lg border text-[9px] font-bold text-center transition-all ${
                           isActive 
                             ? 'border-brand-accent bg-brand-surface text-brand-text shadow-sm' 
                             : 'border-brand-border text-brand-text-muted bg-brand-card hover:bg-brand-surface hover:text-brand-text'
@@ -1242,7 +1244,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
               </div>
 
               {/* Shadow blur */}
-              <div className="space-y-1.5">
+              <div className="space-y-1">
                 <div className="flex justify-between text-[11px]">
                   <span className="font-bold uppercase tracking-wider text-brand-text-muted/80">Outer Shadow</span>
                   <span className="font-mono font-bold text-brand-text">{shadowIntensity}px</span>
@@ -1262,11 +1264,11 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
           </div>
 
           {/* 5. ADD ZOOM ACTION BUTTON */}
-          <div className="pt-6 border-t border-brand-border" id="zoom-action-block">
+          <div className="pt-3 border-t border-brand-border shrink-0" id="zoom-action-block">
             <button
               type="button"
               onClick={handleAddZoom}
-              className="w-full flex items-center justify-center space-x-1.5 py-3 bg-brand-accent hover:bg-brand-accent-hover active:scale-[0.98] text-white text-[11px] font-bold rounded-xl shadow-xs transition-all cursor-pointer"
+              className="w-full flex items-center justify-center space-x-1.5 py-2.5 bg-brand-accent hover:bg-brand-accent-hover active:scale-[0.98] text-white text-[11px] font-bold rounded-xl shadow-xs transition-all cursor-pointer"
               id="add-zoom-btn"
             >
               <Plus size={14} />

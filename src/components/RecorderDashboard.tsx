@@ -40,7 +40,6 @@ import {
 import AudioVisualizer from './AudioVisualizer';
 import ShortcutSettings from './ShortcutSettings';
 import ScreenshotGallery from './ScreenshotGallery';
-import VideoTrimmer from './VideoTrimmer';
 import VideoBackgroundEditor from './VideoBackgroundEditor';
 
 export default function RecorderDashboard() {
@@ -113,7 +112,7 @@ export default function RecorderDashboard() {
 
   // UI Tabs / Panels
   const [sidebarTab, setSidebarTab] = useState<'source' | 'settings' | 'shortcuts'>('source');
-  const [reviewTab, setReviewTab] = useState<'preview' | 'trim' | 'background'>('preview');
+  const [reviewTab, setReviewTab] = useState<'preview' | 'background'>('preview');
 
   // Toasts
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
@@ -1248,16 +1247,6 @@ export default function RecorderDashboard() {
                     Player
                   </button>
                   <button
-                    onClick={() => setReviewTab('trim')}
-                    className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all duration-150 ${
-                      reviewTab === 'trim'
-                        ? 'bg-[#191919] text-white shadow-sm'
-                        : 'text-brand-text-muted hover:text-brand-text hover:bg-brand-surface/40'
-                    }`}
-                  >
-                    Trim Clip
-                  </button>
-                  <button
                     onClick={() => setReviewTab('background')}
                     className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all duration-150 ${
                       reviewTab === 'background'
@@ -1307,13 +1296,6 @@ export default function RecorderDashboard() {
                       id="review-video-player"
                     />
                   </div>
-                </div>
-              ) : reviewTab === 'trim' ? (
-                <div className="w-full max-w-3xl mx-auto py-2 animate-fade-in">
-                  <VideoTrimmer
-                    recording={activeReviewItem}
-                    onSaveTrimmed={handleSaveTrimmed}
-                  />
                 </div>
               ) : (
                 <div className="w-full max-w-5xl mx-auto py-2 animate-fade-in">
