@@ -742,7 +742,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col h-screen w-screen overflow-hidden bg-brand-bg text-brand-text font-sans animate-fade-in" id="canvas-studio-workspace">
+    <div className="flex flex-col h-full w-full overflow-hidden bg-brand-bg text-brand-text font-sans animate-fade-in" id="canvas-studio-workspace">
       
       {/* 1. TOP HEADER NAVIGATION BAR */}
       <div className="flex items-center justify-between px-6 py-3 border-b border-brand-border bg-brand-card h-14 shrink-0" id="studio-header">
@@ -778,7 +778,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
       </div>
 
       {/* 2. DUAL COLUMN CONTENT CANVAS & SETTINGS */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 h-[calc(100vh-56px)] overflow-hidden" id="studio-grid">
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 overflow-hidden" id="studio-grid">
         
         {/* LEFT COLUMN: ACTIVE VIEWING CANVAS & PLAYBACK TIMELINE (9 COLS) */}
         <div className="lg:col-span-9 p-4 flex flex-col space-y-3 h-full overflow-hidden" id="studio-editor-pane">

@@ -1195,7 +1195,8 @@ export default function RecorderDashboard() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6" id="dashboard-wrapper">
+    <div className="h-full w-full overflow-y-auto flex flex-col justify-between" id="dashboard-scroller">
+      <div className="max-w-7xl w-full mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1" id="dashboard-wrapper">
       {/* LEFT COLUMN: ACTIVE SCREEN VIEW / REVIEW PLATFORM (8 COLS) */}
       <div className="lg:col-span-8 flex flex-col space-y-5">
         
@@ -1838,6 +1839,15 @@ export default function RecorderDashboard() {
           <span className="font-medium">{toast.message}</span>
         </div>
       )}
+      </div>
+
+      {/* Elegant Footer */}
+      <footer className="py-8 border-t border-brand-border bg-brand-bg text-center text-xs text-brand-text-muted shrink-0 w-full">
+        <p className="font-serif font-medium">Screen Recorder</p>
+        <p className="text-[11px] mt-1 max-w-lg mx-auto leading-relaxed">
+          Local, high-fidelity capture runs entirely within your browser sandboxed environment. Your media tracks and files never touch any servers.
+        </p>
+      </footer>
     </div>
   );
 }
