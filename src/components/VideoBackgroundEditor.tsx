@@ -118,6 +118,103 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
   const [segments, setSegments] = useState<TimelineSegment[]>([]);
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
 
+  // CapCut-Style scrollable timeline states & refs
+  const timelineViewportRef = useRef<HTMLDivElement | null>(null);
+  const isScrollingProgrammatically = useRef(false);
+  const isUserInteracting = useRef(false);
+  const isDragging = useRef(false);
+  const startX = useRef(0);
+  const startScrollLeft = useRef(0);
+
+  const pxPerSec = zoomLevel * 20;
+
+  // Sync scroll position when currentTime changes programmatically (e.g., during playback)
+  useEffect(() => {
+    if (timelineViewportRef.current && !isUserInteracting.current) {
+      const targetScrollLeft = currentTime * pxPerSec;
+      if (Math.abs(timelineViewportRef.current.scrollLeft - targetScrollLeft) > 1) {
+        isScrollingProgrammatically.current = true;
+        timelineViewportRef.current.scrollLeft = targetScrollLeft;
+      }
+    }
+  }, [currentTime, pxPerSec]);
+
+  // Global mouse event listener for robust drag-to-scroll scrubbing
+  useEffect(() => {
+    const handleWindowMouseMove = (e: MouseEvent) => {
+      if (isDragging.current) {
+        const dx = e.clientX - startX.current;
+        if (timelineViewportRef.current) {
+          timelineViewportRef.current.scrollLeft = startScrollLeft.current - dx;
+        }
+      }
+    };
+    const handleWindowMouseUp = () => {
+      if (isDragging.current) {
+        isDragging.current = false;
+        setTimeout(() => {
+          isUserInteracting.current = false;
+        }, 50);
+      }
+    };
+
+    window.addEventListener('mousemove', handleWindowMouseMove);
+    window.addEventListener('mouseup', handleWindowMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleWindowMouseMove);
+      window.removeEventListener('mouseup', handleWindowMouseUp);
+    };
+  }, []);
+
+  const handleViewportScroll = () => {
+    if (isScrollingProgrammatically.current) {
+      isScrollingProgrammatically.current = false;
+      return;
+    }
+    if (timelineViewportRef.current && duration) {
+      const scrollLeft = timelineViewportRef.current.scrollLeft;
+      const newTime = Math.max(0, Math.min(duration, scrollLeft / pxPerSec));
+      if (videoRef.current) {
+        if (Math.abs(videoRef.current.currentTime - newTime) > 0.05) {
+          isUserInteracting.current = true;
+          videoRef.current.currentTime = newTime;
+          setCurrentTime(newTime);
+          
+          // Small timeout to clear user interaction flag once user stops scrolling
+          const timer = setTimeout(() => {
+            isUserInteracting.current = false;
+          }, 150);
+          return () => clearTimeout(timer);
+        }
+      }
+    }
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return; // Only left-click
+    const target = e.target as HTMLElement;
+    if (target.closest('button') || target.closest('input') || target.closest('select')) return;
+
+    isDragging.current = true;
+    isUserInteracting.current = true;
+    startX.current = e.clientX;
+    startScrollLeft.current = timelineViewportRef.current?.scrollLeft || 0;
+
+    // Pause on drag-seek to give precise CapCut feeling
+    if (isPlaying && videoRef.current) {
+      videoRef.current.pause();
+      setIsPlaying(false);
+    }
+  };
+
+  const calculateTickInterval = (pxPerSec: number) => {
+    if (pxPerSec >= 150) return 0.5;
+    if (pxPerSec >= 80) return 1;
+    if (pxPerSec >= 40) return 2;
+    if (pxPerSec >= 20) return 5;
+    return 10;
+  };
+
   const handleAddTrimSegment = () => {
     const start = currentTime;
     const end = Math.min(duration, currentTime + 2);
@@ -961,6 +1058,41 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
           {/* Canvas Presentation Frame */}
           <div className="relative flex-1 min-h-0 bg-brand-surface/40 rounded-2xl border border-brand-border flex items-center justify-center p-4 shadow-inner overflow-hidden" id="canvas-presentation-frame">
             
+            {/* Elegant overlay progress bar when video is exporting/processing */}
+            {isExporting && (
+              <div className="absolute inset-0 z-50 bg-brand-bg/85 backdrop-blur-md flex flex-col items-center justify-center p-6 animate-fade-in" id="export-overlay-panel">
+                <div className="max-w-md w-full bg-brand-card border border-brand-border rounded-2xl p-6 shadow-2xl space-y-4 relative overflow-hidden" id="export-card">
+                  {/* Subtle decorative glowing spot */}
+                  <div className="absolute -top-12 -right-12 w-24 h-24 bg-brand-accent/20 rounded-full blur-xl pointer-events-none" />
+                  
+                  <div className="flex items-center space-x-3.5">
+                    <div className="w-10 h-10 rounded-xl bg-brand-accent/10 border border-brand-accent/25 flex items-center justify-center text-brand-accent shrink-0 animate-spin">
+                      <RefreshCw size={18} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h4 className="text-sm font-bold text-brand-text tracking-tight">Exporting Video</h4>
+                      <p className="text-[11px] text-brand-text-muted mt-0.5 leading-relaxed truncate">Rendering custom backdrops and layout dimensions...</p>
+                    </div>
+                    <span className="text-base font-black text-brand-accent font-mono shrink-0">{exportProgress}%</span>
+                  </div>
+
+                  {/* Progress bar container */}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="w-full h-2 bg-brand-surface rounded-full overflow-hidden border border-brand-border/40">
+                      <div 
+                        className="h-full bg-brand-accent rounded-full transition-all duration-300 ease-out"
+                        style={{ width: `${exportProgress}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] text-brand-text-muted font-medium">
+                      <span>Synthesizing high-definition frames...</span>
+                      <span>{exportProgress === 100 ? 'Finalizing download...' : 'Please do not close this window'}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Aspect ratio-sensitive scaling container */}
             <div 
               className="relative shadow-2xl rounded-xl overflow-hidden max-h-full max-w-full flex items-center justify-center transition-all duration-300"
@@ -1053,9 +1185,9 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
           </div>
 
           {/* TIMELINE EDIT PANEL WORKSPACE */}
-          <div className="bg-brand-card border border-brand-border rounded-xl p-3 shadow-sm space-y-2 shrink-0" id="timeline-panel">
+          <div className="bg-brand-card border border-brand-border rounded-xl p-3 shadow-sm space-y-3 shrink-0" id="timeline-panel">
             
-            {/* Toolbar Buttons row */}
+            {/* Toolbar Row */}
             <div className="flex items-center justify-between pb-0.5" id="timeline-toolbar">
               <div className="flex items-center space-x-1.5">
                 <button 
@@ -1092,7 +1224,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
                   max={10} 
                   value={zoomLevel} 
                   onChange={(e) => setZoomLevel(parseInt(e.target.value))}
-                  className="w-16 h-1 bg-brand-surface appearance-none rounded-full accent-brand-accent" 
+                  className="w-16 h-1 bg-brand-surface appearance-none rounded-full accent-brand-accent cursor-pointer" 
                 />
 
                 <button 
@@ -1115,112 +1247,188 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
                 </button>
               </div>
 
-              <button
-                onClick={() => {
-                  if (videoRef.current) videoRef.current.currentTime = 0;
-                  setCurrentTime(0);
-                }}
-                className="flex items-center space-x-1 px-2 py-1 bg-brand-surface border border-brand-border hover:bg-brand-surface/80 text-brand-text-muted text-[11px] font-semibold rounded-lg transition-colors"
-              >
-                <RotateCcw size={11} />
-                <span>Reset timeline</span>
-              </button>
+              <div className="flex items-center space-x-2">
+                {/* Current position badge */}
+                <span className="text-[11px] font-mono bg-brand-surface border border-brand-border px-2 py-1 rounded text-brand-text font-bold">
+                  {formatSecsWithMs(currentTime)} / {formatSecsWithMs(duration)}
+                </span>
+
+                <button
+                  onClick={() => {
+                    if (videoRef.current) videoRef.current.currentTime = 0;
+                    setCurrentTime(0);
+                  }}
+                  className="flex items-center space-x-1 px-2 py-1 bg-brand-surface border border-brand-border hover:bg-brand-surface/80 text-brand-text-muted text-[11px] font-semibold rounded-lg transition-colors"
+                >
+                  <RotateCcw size={11} />
+                  <span>Reset</span>
+                </button>
+              </div>
             </div>
 
-            {/* Timeline track viewport */}
-            <div 
-              ref={timelineRef}
-              onClick={handleTimelineClick}
-              className="relative bg-brand-surface/20 border border-brand-border/60 rounded-lg p-2.5 min-h-[90px] select-none overflow-x-hidden cursor-ew-resize"
-              id="timeline-track-view"
-            >
-              {/* Top row: time tick markings */}
-              <div className="relative h-5 w-full border-b border-brand-border/60">
-                {renderTimelineTicks()}
+            {/* Scrollable Viewport Wrapper */}
+            <div className="relative border border-brand-border/60 rounded-xl bg-brand-surface/10 p-0 shadow-inner overflow-hidden min-h-[140px]" id="timeline-capcut-wrapper">
+              
+              {/* STATIC PLAYHEAD NEEDLE (Centered in the viewport) */}
+              <div 
+                className="absolute top-0 bottom-0 left-1/2 w-[2px] bg-brand-accent pointer-events-none z-30 flex flex-col items-center"
+                style={{ transform: 'translateX(-50%)' }}
+                id="capcut-playhead"
+              >
+                {/* Triangular playhead cap */}
+                <div className="w-3 h-3 bg-brand-accent rounded-b-sm shadow-md" style={{ clipPath: 'polygon(0% 0%, 100% 0%, 50% 100%)' }} />
+                {/* Dynamic line glow */}
+                <div className="w-[2px] flex-1 bg-gradient-to-b from-brand-accent via-brand-accent/70 to-brand-accent/20" />
               </div>
 
-              {/* Bottom row: visual video track representation */}
-              <div className="relative mt-2.5 h-10 w-full bg-brand-surface/55 rounded-md border border-brand-border overflow-hidden flex items-center justify-center">
-                <div className="absolute inset-y-0 left-0 bg-brand-accent/5 w-full flex items-center pl-4 font-mono text-[10px] text-brand-text-muted font-semibold select-none">
-                  {recording.name} (Source Capture)
-                </div>
+              {/* Scrollable Track Container */}
+              <div 
+                ref={timelineViewportRef}
+                onScroll={handleViewportScroll}
+                onMouseDown={handleMouseDown}
+                className="w-full h-full overflow-x-auto overflow-y-hidden select-none cursor-ew-resize scrollbar-none flex flex-col justify-start relative pt-7 pb-2.5"
+                style={{ scrollBehavior: 'auto' }}
+                id="timeline-tracks-viewport"
+              >
                 
-                {/* Simulated Waveform / Video frames track */}
-                <div className="flex space-x-1 opacity-20 pointer-events-none">
-                  {Array.from({ length: 48 }).map((_, i) => (
-                    <div 
-                      key={i} 
-                      className="w-[3px] bg-brand-text rounded-full" 
-                      style={{ height: `${16 + Math.sin(i * 0.4) * 10}px` }}
-                    />
-                  ))}
-                </div>
-
-                {/* --- RENDER TIMELINE SEGMENTS OVER THE TRACK --- */}
-                {segments.map((seg) => {
-                  const leftPct = (seg.start / duration) * 100;
-                  const widthPct = ((seg.end - seg.start) / duration) * 100;
-                  const isSelected = selectedSegmentId === seg.id;
+                {/* INNER FLEX CONTAINER representing the full scrolling range */}
+                <div className="flex items-stretch h-full relative" style={{ width: '100%' }}>
                   
-                  return (
-                    <div
-                      key={seg.id}
-                      onClick={(e) => {
-                        e.stopPropagation(); // prevent seek
-                        setSelectedSegmentId(seg.id);
-                      }}
-                      className={`absolute inset-y-0.5 rounded-md flex items-center justify-between px-2 cursor-pointer transition-all border text-[10px] font-semibold select-none z-20 ${
-                        seg.type === 'trim'
-                          ? isSelected
-                            ? 'bg-rose-500/35 border-rose-500 text-rose-100 ring-2 ring-rose-400'
-                            : 'bg-rose-500/20 border-rose-500/55 text-rose-200 hover:bg-rose-500/30'
-                          : isSelected
-                            ? 'bg-amber-500/35 border-amber-500 text-amber-100 ring-2 ring-amber-400'
-                            : 'bg-amber-500/20 border-amber-500/55 text-amber-200 hover:bg-amber-500/30'
-                      }`}
-                      style={{
-                        left: `${leftPct}%`,
-                        width: `${widthPct}%`,
-                      }}
-                    >
-                      <span className="truncate flex items-center space-x-1">
-                        {seg.type === 'trim' ? (
-                          <>
-                            <Scissors size={10} className="shrink-0 text-rose-300" />
-                            <span>Trimmed Range</span>
-                          </>
-                        ) : (
-                          <>
-                            <Search size={10} className="shrink-0 text-amber-300" />
-                            <span>Zoom {seg.zoomScale || 1.4}x</span>
-                          </>
-                        )}
+                  {/* START SPACER: 50% of the viewport width so 0s can align with the center line */}
+                  <div className="shrink-0" style={{ width: '50%' }} />
+
+                  {/* ACTIVE TIMELINE CONTAINER (Ruler + Tracks) */}
+                  <div className="relative shrink-0 flex flex-col justify-between" style={{ width: `${duration * pxPerSec}px` }} id="timeline-actual-content">
+                    
+                    {/* 1. RULER TRACK (Timestamps & ticks) */}
+                    <div className="absolute top-[-24px] left-0 right-0 h-5 border-b border-brand-border/40" id="ruler-layer">
+                      {/* Dynamic time ticks */}
+                      {(() => {
+                        const tickInterval = calculateTickInterval(pxPerSec);
+                        const ticks = [];
+                        const subTickInterval = tickInterval / 5;
+
+                        for (let timeVal = 0; timeVal <= duration; timeVal += subTickInterval) {
+                          const isLabelTick = Math.abs(timeVal % tickInterval) < 0.001 || timeVal === 0;
+                          const isHalfTick = Math.abs(timeVal % (tickInterval / 2)) < 0.001;
+                          const leftPx = timeVal * pxPerSec;
+
+                          ticks.push(
+                            <div 
+                              key={timeVal.toFixed(2)} 
+                              className="absolute bottom-0 flex flex-col items-center"
+                              style={{ left: `${leftPx}px` }}
+                            >
+                              {isLabelTick && (
+                                <span className="text-[9px] font-mono font-medium text-slate-400 mb-1 absolute bottom-3 -translate-x-1/2 select-none pointer-events-none">
+                                  {formatSecs(timeVal)}
+                                </span>
+                              )}
+                              <div className={`w-[1px] ${isLabelTick ? 'h-2 bg-slate-400' : isHalfTick ? 'h-1.5 bg-slate-300' : 'h-1 bg-slate-200'}`} />
+                            </div>
+                          );
+                        }
+                        return ticks;
+                      })()}
+                    </div>
+
+                    {/* 2. EDITS TRACK LAYER (Trim & Zoom segments) */}
+                    <div className="relative h-7 w-full bg-brand-surface/30 rounded-md border border-brand-border/30 mb-2 overflow-hidden flex items-center" id="edits-layer-track">
+                      <span className="absolute left-2.5 text-[8px] font-bold text-brand-text-muted/60 uppercase select-none pointer-events-none z-10">
+                        Edits / Ranges
                       </span>
-                      {isSelected && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteSegment(seg.id);
-                          }}
-                          className="p-0.5 hover:bg-black/30 rounded text-white"
-                          title="Delete segment"
-                        >
-                          <Trash2 size={10} />
-                        </button>
+                      {segments.length === 0 ? (
+                        <span className="mx-auto text-[9px] text-brand-text-muted/40 italic select-none pointer-events-none">
+                          No trims or zoom levels applied
+                        </span>
+                      ) : (
+                        segments.map((seg) => {
+                          const leftPx = seg.start * pxPerSec;
+                          const widthPx = (seg.end - seg.start) * pxPerSec;
+                          const isSelected = selectedSegmentId === seg.id;
+
+                          return (
+                            <div
+                              key={seg.id}
+                              onClick={(e) => {
+                                e.stopPropagation(); // prevent seek
+                                setSelectedSegmentId(seg.id);
+                              }}
+                              className={`absolute h-[22px] rounded flex items-center justify-between px-1.5 cursor-pointer transition-all border text-[9px] font-bold select-none z-20 ${
+                                seg.type === 'trim'
+                                  ? isSelected
+                                    ? 'bg-rose-500/40 border-rose-500 text-rose-50 ring-2 ring-rose-400'
+                                    : 'bg-rose-500/20 border-rose-500/50 text-rose-200 hover:bg-rose-500/30'
+                                  : isSelected
+                                    ? 'bg-amber-500/40 border-amber-500 text-amber-50 ring-2 ring-amber-400'
+                                    : 'bg-amber-500/20 border-amber-500/50 text-amber-200 hover:bg-amber-500/30'
+                              }`}
+                              style={{
+                                left: `${leftPx}px`,
+                                width: `${widthPx}px`,
+                              }}
+                            >
+                              <span className="truncate flex items-center space-x-1">
+                                {seg.type === 'trim' ? (
+                                  <>
+                                    <Scissors size={8} className="shrink-0 text-rose-300" />
+                                    <span>Trimmed</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Search size={8} className="shrink-0 text-amber-300" />
+                                    <span>Zoom {seg.zoomScale || 1.4}x</span>
+                                  </>
+                                )}
+                              </span>
+                              {isSelected && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteSegment(seg.id);
+                                  }}
+                                  className="p-0.5 hover:bg-black/30 rounded text-white shrink-0 ml-1"
+                                  title="Delete segment"
+                                >
+                                  <Trash2 size={8} />
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })
                       )}
                     </div>
-                  );
-                })}
+
+                    {/* 3. PRIMARY VIDEO TRACK LAYER */}
+                    <div className="relative h-12 w-full bg-brand-surface/60 rounded-md border border-brand-border/80 overflow-hidden flex items-center justify-between" id="video-layer-track">
+                      <div className="absolute inset-y-0 left-2.5 flex items-center font-semibold text-[9px] text-brand-text-muted/70 tracking-tight z-10 select-none pointer-events-none">
+                        🎬 {recording.name || 'Original Recording'}
+                      </div>
+
+                      {/* Generated Waveform frames in track */}
+                      <div className="flex items-center space-x-0.5 px-4 h-full w-full justify-center opacity-30 pointer-events-none">
+                        {(() => {
+                          const waveLinesCount = Math.floor((duration * pxPerSec) / 5);
+                          return Array.from({ length: Math.max(10, Math.min(200, waveLinesCount)) }).map((_, i) => (
+                            <div 
+                              key={i} 
+                              className="w-[2px] bg-brand-text rounded-full" 
+                              style={{ height: `${12 + Math.sin(i * 0.3) * 16 + Math.cos(i * 0.7) * 6}px` }}
+                            />
+                          ));
+                        })()}
+                      </div>
+                    </div>
+
+                  </div>
+
+                  {/* END SPACER: 50% of the viewport width */}
+                  <div className="shrink-0" style={{ width: '50%' }} />
+
+                </div>
+
               </div>
 
-              {/* brand-accent Playhead Line indicating current position */}
-              <div 
-                className="absolute top-0 bottom-0 w-[2px] bg-brand-accent pointer-events-none z-30 transition-all duration-75"
-                style={{ left: `${(currentTime / (duration || 1)) * 100}%` }}
-              >
-                {/* Triangular head badge */}
-                <div className="absolute -top-1 -left-[5px] w-[12px] h-[12px] bg-brand-accent clip-triangle shadow-xs" style={{ clipPath: 'polygon(50% 100%, 0 0, 100% 0)' }} />
-              </div>
             </div>
 
             {/* If a segment is selected, show its editing sub-panel */}

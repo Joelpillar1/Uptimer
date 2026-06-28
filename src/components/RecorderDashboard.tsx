@@ -42,7 +42,11 @@ import ShortcutSettings from './ShortcutSettings';
 import ScreenshotGallery from './ScreenshotGallery';
 import VideoBackgroundEditor from './VideoBackgroundEditor';
 
-export default function RecorderDashboard() {
+interface RecorderDashboardProps {
+  onStudioModeChange?: (isStudio: boolean) => void;
+}
+
+export default function RecorderDashboard({ onStudioModeChange }: RecorderDashboardProps = {}) {
   // --- 1. CONFIGURATION STATES ---
   const [config, setConfig] = useState<RecorderConfig>({
     resolution: '4k',
@@ -122,6 +126,13 @@ export default function RecorderDashboard() {
   useEffect(() => {
     setIsInIframe(typeof window !== 'undefined' && window.self !== window.top);
   }, []);
+
+  useEffect(() => {
+    if (onStudioModeChange) {
+      const isStudio = status === 'review' && !!activeReviewItem && reviewTab === 'background';
+      onStudioModeChange(isStudio);
+    }
+  }, [status, activeReviewItem, reviewTab, onStudioModeChange]);
 
   useEffect(() => {
     setReviewTab('preview');
@@ -1164,7 +1175,16 @@ export default function RecorderDashboard() {
 
     setRecordings((prev) => [newRecording, ...prev]);
     setActiveReviewItem(newRecording);
-    triggerToast('Background backdrop rendered & compiled successfully!', 'success');
+
+    // Automatically trigger immediate download of the compiled video
+    const link = document.createElement('a');
+    link.href = newUrl;
+    link.download = newName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    triggerToast('Background backdrop compiled & downloaded successfully!', 'success');
   };
 
   // Format Helper: Bytes to human format
