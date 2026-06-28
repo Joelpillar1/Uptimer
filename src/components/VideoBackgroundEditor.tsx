@@ -121,6 +121,8 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
   // CapCut-Style scrollable timeline states & refs
   const timelineViewportRef = useRef<HTMLDivElement | null>(null);
   const isScrollingProgrammatically = useRef(false);
+  const lastProgrammaticScrollTime = useRef<number>(0);
+  const scrollTimeoutRef = useRef<any>(null);
   const isUserInteracting = useRef(false);
   const isDragging = useRef(false);
   const startX = useRef(0);
@@ -134,6 +136,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
       const targetScrollLeft = currentTime * pxPerSec;
       if (Math.abs(timelineViewportRef.current.scrollLeft - targetScrollLeft) > 1) {
         isScrollingProgrammatically.current = true;
+        lastProgrammaticScrollTime.current = Date.now();
         timelineViewportRef.current.scrollLeft = targetScrollLeft;
       }
     }
@@ -152,9 +155,10 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
     const handleWindowMouseUp = () => {
       if (isDragging.current) {
         isDragging.current = false;
-        setTimeout(() => {
+        if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+        scrollTimeoutRef.current = setTimeout(() => {
           isUserInteracting.current = false;
-        }, 50);
+        }, 100);
       }
     };
 
@@ -163,12 +167,20 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
     return () => {
       window.removeEventListener('mousemove', handleWindowMouseMove);
       window.removeEventListener('mouseup', handleWindowMouseUp);
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
     };
   }, []);
 
   const handleViewportScroll = () => {
+    if (isPlaying) {
+      // Do not feedback scroll position into video currentTime during playback!
+      return;
+    }
     if (isScrollingProgrammatically.current) {
       isScrollingProgrammatically.current = false;
+      return;
+    }
+    if (Date.now() - lastProgrammaticScrollTime.current < 150) {
       return;
     }
     if (timelineViewportRef.current && duration) {
@@ -180,11 +192,10 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
           videoRef.current.currentTime = newTime;
           setCurrentTime(newTime);
           
-          // Small timeout to clear user interaction flag once user stops scrolling
-          const timer = setTimeout(() => {
+          if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+          scrollTimeoutRef.current = setTimeout(() => {
             isUserInteracting.current = false;
           }, 150);
-          return () => clearTimeout(timer);
         }
       }
     }
@@ -701,10 +712,10 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
   // Real-time animation loop for canvas preview
   useEffect(() => {
     let animId: number;
-    const canvas = canvasRef.current;
-    const video = videoRef.current;
 
     const render = () => {
+      const canvas = canvasRef.current;
+      const video = videoRef.current;
       if (canvas && video) {
         const ctx = canvas.getContext('2d');
         if (ctx) {
@@ -1127,7 +1138,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
               src={recording.url}
               onTimeUpdate={handleTimeUpdate}
               onLoadedMetadata={handleLoadedMetadata}
-              className="hidden"
+              style={{ position: 'absolute', width: '1px', height: '1px', opacity: 0, pointerEvents: 'none', overflow: 'hidden' }}
               playsInline
               muted={isMuted}
               loop
