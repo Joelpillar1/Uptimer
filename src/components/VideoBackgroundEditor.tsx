@@ -120,23 +120,45 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
 
   // CapCut-Style scrollable timeline states & refs
   const timelineViewportRef = useRef<HTMLDivElement | null>(null);
-  const isScrollingProgrammatically = useRef(false);
-  const lastProgrammaticScrollTime = useRef<number>(0);
-  const scrollTimeoutRef = useRef<any>(null);
-  const isUserInteracting = useRef(false);
   const isDragging = useRef(false);
   const startX = useRef(0);
   const startScrollLeft = useRef(0);
 
+  // Interaction flags and timers to completely prevent recursive feedback loops and performance freezes
+  const isUserInteracting = useRef(false);
+  const scrollTimeoutRef = useRef<any>(null);
+  const lastSeekTime = useRef(0);
+  const pendingSeekTimeout = useRef<any>(null);
+
   const pxPerSec = zoomLevel * 20;
+
+  // Throttled video seeking to prevent overwhelming the browser's video decoder thread
+  const throttledSeek = (time: number) => {
+    const now = Date.now();
+    if (pendingSeekTimeout.current) {
+      clearTimeout(pendingSeekTimeout.current);
+    }
+
+    if (now - lastSeekTime.current > 60) {
+      if (videoRef.current) {
+        videoRef.current.currentTime = time;
+      }
+      lastSeekTime.current = now;
+    } else {
+      pendingSeekTimeout.current = setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.currentTime = time;
+        }
+        lastSeekTime.current = Date.now();
+      }, 60);
+    }
+  };
 
   // Sync scroll position when currentTime changes programmatically (e.g., during playback)
   useEffect(() => {
     if (timelineViewportRef.current && !isUserInteracting.current) {
       const targetScrollLeft = currentTime * pxPerSec;
-      if (Math.abs(timelineViewportRef.current.scrollLeft - targetScrollLeft) > 1) {
-        isScrollingProgrammatically.current = true;
-        lastProgrammaticScrollTime.current = Date.now();
+      if (Math.abs(timelineViewportRef.current.scrollLeft - targetScrollLeft) > 3) {
         timelineViewportRef.current.scrollLeft = targetScrollLeft;
       }
     }
@@ -158,7 +180,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
         if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
         scrollTimeoutRef.current = setTimeout(() => {
           isUserInteracting.current = false;
-        }, 100);
+        }, 150);
       }
     };
 
@@ -168,37 +190,51 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
       window.removeEventListener('mousemove', handleWindowMouseMove);
       window.removeEventListener('mouseup', handleWindowMouseUp);
       if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+      if (pendingSeekTimeout.current) clearTimeout(pendingSeekTimeout.current);
     };
   }, []);
 
   const handleViewportScroll = () => {
-    if (isPlaying) {
-      // Do not feedback scroll position into video currentTime during playback!
-      return;
-    }
-    if (isScrollingProgrammatically.current) {
-      isScrollingProgrammatically.current = false;
-      return;
-    }
-    if (Date.now() - lastProgrammaticScrollTime.current < 150) {
-      return;
-    }
     if (timelineViewportRef.current && duration) {
+      // Only process scroll events that are initiated by active user interaction
+      if (!isUserInteracting.current && !isDragging.current) {
+        return;
+      }
+
       const scrollLeft = timelineViewportRef.current.scrollLeft;
       const newTime = Math.max(0, Math.min(duration, scrollLeft / pxPerSec));
-      if (videoRef.current) {
-        if (Math.abs(videoRef.current.currentTime - newTime) > 0.05) {
-          isUserInteracting.current = true;
-          videoRef.current.currentTime = newTime;
-          setCurrentTime(newTime);
-          
-          if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
-          scrollTimeoutRef.current = setTimeout(() => {
-            isUserInteracting.current = false;
-          }, 150);
+      
+      // Pause playback if user manually scrolls/seeks the timeline
+      if (isPlaying) {
+        if (videoRef.current) {
+          videoRef.current.pause();
         }
+        setIsPlaying(false);
       }
+
+      setCurrentTime(newTime);
+      throttledSeek(newTime);
     }
+  };
+
+  const handleWheel = () => {
+    isUserInteracting.current = true;
+    if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+    scrollTimeoutRef.current = setTimeout(() => {
+      isUserInteracting.current = false;
+    }, 250);
+  };
+
+  const handleTouchStart = () => {
+    isUserInteracting.current = true;
+    if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+  };
+
+  const handleTouchEnd = () => {
+    if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+    scrollTimeoutRef.current = setTimeout(() => {
+      isUserInteracting.current = false;
+    }, 150);
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -207,7 +243,6 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
     if (target.closest('button') || target.closest('input') || target.closest('select')) return;
 
     isDragging.current = true;
-    isUserInteracting.current = true;
     startX.current = e.clientX;
     startScrollLeft.current = timelineViewportRef.current?.scrollLeft || 0;
 
@@ -1297,6 +1332,10 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
                 ref={timelineViewportRef}
                 onScroll={handleViewportScroll}
                 onMouseDown={handleMouseDown}
+                onWheel={handleWheel}
+                onTouchStart={handleTouchStart}
+                onTouchEnd={handleTouchEnd}
+                onTouchCancel={handleTouchEnd}
                 className="w-full h-full overflow-x-auto overflow-y-hidden select-none cursor-ew-resize scrollbar-none flex flex-col justify-start relative pt-7 pb-2.5"
                 style={{ scrollBehavior: 'auto' }}
                 id="timeline-tracks-viewport"
