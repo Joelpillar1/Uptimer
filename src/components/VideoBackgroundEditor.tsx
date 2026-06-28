@@ -360,10 +360,18 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
 
   const handleMuteToggle = () => {
     if (videoRef.current) {
-      videoRef.current.muted = !isMuted;
-      setIsMuted(!isMuted);
+      const newMuted = !isMuted;
+      videoRef.current.muted = newMuted;
+      setIsMuted(newMuted);
     }
   };
+
+  // Synchronize underlying video element muted property with React state to bypass standard React muted state sync issues
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.muted = isMuted;
+    }
+  }, [isMuted]);
 
   // Custom Image Upload handler
   const triggerCustomImageUpload = () => {
@@ -579,9 +587,9 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
     ctx.restore(); // restores from blur filters to make sure video card is sharp
 
     // --- 2. PREPARE CARD POSITION & DIMENSIONS ---
-    const rawVideoW = videoEl?.videoWidth || 1280;
-    const rawVideoH = videoEl?.videoHeight || 720;
-    const videoRatio = rawVideoW / rawVideoH;
+    const rawVideoW = videoEl?.videoWidth || videoWidth || 1280;
+    const rawVideoH = videoEl?.videoHeight || videoHeight || 720;
+    const videoRatio = rawVideoH > 0 ? rawVideoW / rawVideoH : 1.777;
 
     // Outer padding size scaled relative to canvas size
     const pad = Math.max(15, Math.round(paddingSize * (canvasWidth / 1000)));
@@ -744,16 +752,29 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
     }
 
     // --- 5. DRAW ACTIVE VIDEO FRAME ---
-    if (videoEl && (videoEl.readyState >= 1 || videoEl.videoWidth > 0)) {
-      if (isActiveZoom) {
-        const scale = activeZoomScale || 1.4;
-        const sw = rawVideoW / scale;
-        const sh = rawVideoH / scale;
-        const sx = (rawVideoW - sw) / 2;
-        const sy = (rawVideoH - sh) / 2;
-        ctx.drawImage(videoEl, sx, sy, sw, sh, videoX, videoY, drawW, drawH);
-      } else {
-        ctx.drawImage(videoEl, videoX, videoY, drawW, drawH);
+    if (videoEl && (videoEl.readyState >= 2 || videoEl.videoWidth > 0)) {
+      try {
+        if (isActiveZoom) {
+          const scale = activeZoomScale || 1.4;
+          const sw = rawVideoW / scale;
+          const sh = rawVideoH / scale;
+          const sx = (rawVideoW - sw) / 2;
+          const sy = (rawVideoH - sh) / 2;
+          ctx.drawImage(videoEl, sx, sy, sw, sh, videoX, videoY, drawW, drawH);
+        } else {
+          ctx.drawImage(videoEl, videoX, videoY, drawW, drawH);
+        }
+      } catch (e) {
+        console.warn('Failed to draw active video frame onto canvas:', e);
+        // Fallback placeholder inside card clip
+        ctx.fillStyle = '#18181b';
+        ctx.fillRect(videoX, videoY, drawW, drawH);
+        
+        ctx.fillStyle = '#a1a1aa';
+        ctx.font = '12px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('Decoding video frame...', videoX + drawW / 2, videoY + drawH / 2);
       }
     } else {
       // Background inside clip until frame loads
@@ -1178,7 +1199,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
                 ref={canvasRef}
                 width={previewW}
                 height={previewH}
-                className="max-h-full max-w-full object-contain bg-black"
+                className="max-h-full max-w-full object-contain bg-black relative z-10"
                 id="render-canvas"
               />
               
@@ -1186,33 +1207,39 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
               {!isPlaying && (
                 <button
                   onClick={togglePlay}
-                  className="absolute inset-0 m-auto w-14 h-14 bg-black/80 hover:bg-[#191919] text-white rounded-full flex items-center justify-center shadow-lg hover:scale-105 transition-all duration-150 active:scale-95 animate-pulse"
+                  className="absolute inset-0 m-auto w-14 h-14 bg-black/80 hover:bg-[#191919] text-white rounded-full flex items-center justify-center shadow-lg hover:scale-105 transition-all duration-150 active:scale-95 animate-pulse z-20"
                 >
                   <Play size={20} className="ml-1 fill-white" />
                 </button>
               )}
-            </div>
 
-            {/* Hidden Video Source Object */}
-            <video
-              ref={videoRef}
-              src={recording.url}
-              onTimeUpdate={handleTimeUpdate}
-              onLoadedMetadata={handleLoadedMetadata}
-              style={{
-                position: 'fixed',
-                left: '-9999px',
-                top: '-9999px',
-                width: '480px',
-                height: '270px',
-                opacity: 0.01,
-                pointerEvents: 'none',
-              }}
-              playsInline
-              muted={isMuted}
-              loop
-              preload="auto"
-            />
+              {/* Hidden Video Source Object layered behind the canvas but within visible DOM to avoid browser background decoding suspends */}
+              <video
+                ref={videoRef}
+                src={recording.url}
+                onTimeUpdate={handleTimeUpdate}
+                onLoadedMetadata={handleLoadedMetadata}
+                onLoadedData={handleLoadedMetadata}
+                onCanPlay={handleLoadedMetadata}
+                onPlaying={handleLoadedMetadata}
+                onDurationChange={handleLoadedMetadata}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  opacity: 0.001,
+                  zIndex: 0,
+                  pointerEvents: 'none',
+                }}
+                playsInline
+                muted={isMuted}
+                loop
+                preload="auto"
+              />
+            </div>
           </div>
 
           {/* PLAYBACK CONTROL HUD BAR */}
