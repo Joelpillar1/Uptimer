@@ -226,7 +226,7 @@ export default function VideoTrimmer({ recording, onSaveTrimmed }: VideoTrimmerP
   };
 
   return (
-    <div className="bg-brand-card rounded-xl border border-brand-border p-5 relative shadow-sm" id="video-trimmer">
+    <div className="bg-transparent p-1 relative" id="video-trimmer">
       <div className="flex items-center space-x-2 mb-4 pb-3 border-b border-brand-border/60">
         <div className="p-1.5 bg-brand-accent/10 rounded-lg text-brand-accent">
           <Scissors size={18} />

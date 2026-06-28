@@ -41,6 +41,7 @@ import AudioVisualizer from './AudioVisualizer';
 import ShortcutSettings from './ShortcutSettings';
 import ScreenshotGallery from './ScreenshotGallery';
 import VideoTrimmer from './VideoTrimmer';
+import VideoBackgroundEditor from './VideoBackgroundEditor';
 
 export default function RecorderDashboard() {
   // --- 1. CONFIGURATION STATES ---
@@ -112,6 +113,7 @@ export default function RecorderDashboard() {
 
   // UI Tabs / Panels
   const [sidebarTab, setSidebarTab] = useState<'source' | 'settings' | 'shortcuts'>('source');
+  const [reviewTab, setReviewTab] = useState<'preview' | 'trim' | 'background'>('preview');
 
   // Toasts
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
@@ -121,6 +123,10 @@ export default function RecorderDashboard() {
   useEffect(() => {
     setIsInIframe(typeof window !== 'undefined' && window.self !== window.top);
   }, []);
+
+  useEffect(() => {
+    setReviewTab('preview');
+  }, [activeReviewItem?.id]);
 
   // Stream state for clean conditional rendering of video element
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
@@ -1137,6 +1143,31 @@ export default function RecorderDashboard() {
     triggerToast('Video trimmed & re-compiled successfully!', 'success');
   };
 
+  const handleSaveWithBackground = (bgBlob: Blob, duration: number, nameSuffix: string) => {
+    if (!activeReviewItem) return;
+
+    const newId = `${activeReviewItem.id}-bg-${nameSuffix}`;
+    const newName = activeReviewItem.name.replace(/\.([a-zA-Z0-9]+)$/, `-backdrop-${nameSuffix}.$1`);
+    const newUrl = URL.createObjectURL(bgBlob);
+
+    const newRecording: RecordingItem = {
+      id: newId,
+      name: newName,
+      blob: bgBlob,
+      url: newUrl,
+      duration: Math.round(duration),
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      size: bgBlob.size,
+      format: activeReviewItem.format,
+      resolution: activeReviewItem.resolution,
+      isTrimmed: activeReviewItem.isTrimmed
+    };
+
+    setRecordings((prev) => [newRecording, ...prev]);
+    setActiveReviewItem(newRecording);
+    triggerToast('Background backdrop rendered & compiled successfully!', 'success');
+  };
+
   // Format Helper: Bytes to human format
   const formatBytes = (bytes: number, decimals = 1) => {
     if (bytes === 0) return '0 B';
@@ -1153,6 +1184,16 @@ export default function RecorderDashboard() {
     const s = seconds % 60;
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
+
+  if (status === 'review' && activeReviewItem && reviewTab === 'background') {
+    return (
+      <VideoBackgroundEditor
+        recording={activeReviewItem}
+        onSaveWithBackground={handleSaveWithBackground}
+        onBack={() => setReviewTab('preview')}
+      />
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6" id="dashboard-wrapper">
@@ -1179,7 +1220,7 @@ export default function RecorderDashboard() {
           
           {/* Work Space Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-brand-border bg-brand-surface text-brand-text">
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-3">
               <span className="flex h-2 w-2 relative">
                 {status === 'recording' ? (
                   <>
@@ -1190,39 +1231,99 @@ export default function RecorderDashboard() {
                   <span className={`relative inline-flex rounded-full h-2 w-2 ${compositeStreamRef.current ? 'bg-emerald-600' : 'bg-brand-text-muted/40'}`}></span>
                 )}
               </span>
-              <span className="text-xs font-medium tracking-tight text-brand-text">
+              <span className="text-xs font-medium tracking-tight text-brand-text mr-1">
                 {status === 'idle' ? 'Live Stream' : status === 'recording' ? 'Recording' : status === 'paused' ? 'Paused' : status === 'countdown' ? 'Countdown' : 'Review Capture'}
               </span>
+
+              {status === 'review' && activeReviewItem && (
+                <div className="flex items-center space-x-1 bg-brand-card border border-brand-border/60 p-0.5 rounded-lg">
+                  <button
+                    onClick={() => setReviewTab('preview')}
+                    className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all duration-150 ${
+                      reviewTab === 'preview'
+                        ? 'bg-[#191919] text-white shadow-sm'
+                        : 'text-brand-text-muted hover:text-brand-text hover:bg-brand-surface/40'
+                    }`}
+                  >
+                    Player
+                  </button>
+                  <button
+                    onClick={() => setReviewTab('trim')}
+                    className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all duration-150 ${
+                      reviewTab === 'trim'
+                        ? 'bg-[#191919] text-white shadow-sm'
+                        : 'text-brand-text-muted hover:text-brand-text hover:bg-brand-surface/40'
+                    }`}
+                  >
+                    Trim Clip
+                  </button>
+                  <button
+                    onClick={() => setReviewTab('background')}
+                    className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all duration-150 ${
+                      reviewTab === 'background'
+                        ? 'bg-[#191919] text-white shadow-sm'
+                        : 'text-brand-text-muted hover:text-brand-text hover:bg-brand-surface/40'
+                    }`}
+                  >
+                    Canvas Studio
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Quick config display */}
             <div className="flex items-center space-x-2 text-[10px] font-mono text-brand-text-muted">
-              <span className="px-1.5 py-0.5 rounded bg-brand-card border border-brand-border">
-                {config.resolution.toUpperCase()}
-              </span>
-              <span className="px-1.5 py-0.5 rounded bg-brand-card border border-brand-border">
-                {config.fps} FPS
-              </span>
+              {status === 'review' && activeReviewItem ? (
+                <span className="px-1.5 py-0.5 rounded bg-brand-card border border-brand-border text-brand-accent font-semibold">
+                  {formatBytes(activeReviewItem.size)}
+                </span>
+              ) : (
+                <>
+                  <span className="px-1.5 py-0.5 rounded bg-brand-card border border-brand-border">
+                    {config.resolution.toUpperCase()}
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded bg-brand-card border border-brand-border">
+                    {config.fps} FPS
+                  </span>
+                </>
+              )}
             </div>
           </div>
 
           {/* Active Preview Area */}
-          <div className="relative flex-1 bg-black flex items-center justify-center min-h-[340px]">
+          <div className={`relative flex-1 flex flex-col justify-center min-h-[340px] ${reviewTab === 'preview' || status !== 'review' ? 'bg-black items-center' : 'bg-[#12110F] p-4 overflow-y-auto'}`}>
             {/* Review mode video player */}
             {status === 'review' && activeReviewItem ? (
-              <div className="w-full h-full flex flex-col justify-between">
-                <div className="flex-1 max-h-[440px] relative bg-black flex items-center justify-center p-2">
-                  <video
-                    src={activeReviewItem.url}
-                    controls
-                    playsInline
-                    muted
-                    preload="metadata"
-                    className="max-h-[380px] w-full rounded-lg object-contain shadow-lg"
-                    id="review-video-player"
+              reviewTab === 'preview' ? (
+                <div className="w-full h-full flex flex-col justify-between p-4">
+                  <div className="flex-1 max-h-[440px] relative bg-black flex items-center justify-center p-2 rounded-xl">
+                    <video
+                      src={activeReviewItem.url}
+                      controls
+                      playsInline
+                      muted
+                      preload="metadata"
+                      className="max-h-[420px] w-full rounded-lg object-contain shadow-lg"
+                      id="review-video-player"
+                    />
+                  </div>
+                </div>
+              ) : reviewTab === 'trim' ? (
+                <div className="w-full max-w-3xl mx-auto py-2 animate-fade-in">
+                  <VideoTrimmer
+                    recording={activeReviewItem}
+                    onSaveTrimmed={handleSaveTrimmed}
                   />
                 </div>
-              </div>
+              ) : (
+                <div className="w-full max-w-5xl mx-auto py-2 animate-fade-in">
+                  <VideoBackgroundEditor
+                    recording={activeReviewItem}
+                    onSaveWithBackground={handleSaveWithBackground}
+                    onBack={() => setReviewTab('preview')}
+                  />
+                </div>
+              )
             ) : (
               // Active Camera / Display Preview feed
               <div className="w-full h-full relative flex items-center justify-center">
@@ -1240,7 +1341,7 @@ export default function RecorderDashboard() {
                 {/* Placeholder when idle/disconnected */}
                 {!activeStream && status === 'idle' && (
                   <div className="flex flex-col items-center justify-center text-center p-6 space-y-3">
-                    <div className="w-12 h-12 rounded-xl bg-brand-accent/10 border border-brand-accent/20 flex items-center justify-center text-brand-accent">
+                    <div className="w-12 h-12 rounded-xl bg-brand-accent/10 border border-brand-border flex items-center justify-center text-brand-accent">
                       <Monitor size={22} />
                     </div>
                     <div>
@@ -1398,13 +1499,7 @@ export default function RecorderDashboard() {
           </div>
         </div>
 
-        {/* Trimmer Video Editor layout if in Review Deck */}
-        {status === 'review' && activeReviewItem && (
-          <VideoTrimmer
-            recording={activeReviewItem}
-            onSaveTrimmed={handleSaveTrimmed}
-          />
-        )}
+
 
         {/* SCREENSHOTS CONTAINER */}
         <ScreenshotGallery
