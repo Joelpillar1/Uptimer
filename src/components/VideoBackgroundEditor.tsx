@@ -332,7 +332,11 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
   // Robustly verify and set metadata on mount/recording change
   useEffect(() => {
     if (videoRef.current) {
-      videoRef.current.load();
+      try {
+        videoRef.current.load();
+      } catch (e) {
+        console.warn('Failed to load video on mount/change', e);
+      }
       if (videoRef.current.readyState >= 1) {
         setDuration(videoRef.current.duration || recording.duration || 15);
         if (videoRef.current.videoWidth) {
@@ -607,6 +611,27 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
     const drawW = cardW;
     const drawH = cardH - chromeHeaderH;
 
+    const safeRoundRect = (
+      c: CanvasRenderingContext2D,
+      x: number,
+      y: number,
+      w: number,
+      h: number,
+      r: number
+    ) => {
+      if (typeof c.roundRect === 'function') {
+        c.roundRect(x, y, w, h, r);
+      } else {
+        if (w < 2 * r) r = w / 2;
+        if (h < 2 * r) r = h / 2;
+        c.moveTo(x + r, y);
+        c.arcTo(x + w, y, x + w, y + h, r);
+        c.arcTo(x + w, y + h, x, y + h, r);
+        c.arcTo(x, y + h, x, y, r);
+        c.arcTo(x, y, x + w, y, r);
+      }
+    };
+
     // --- 3. DRAW INNER CARD SOFT SHADOW ---
     if (shadowBlurVal > 0) {
       ctx.save();
@@ -616,7 +641,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
       ctx.fillStyle = '#18181b';
       
       ctx.beginPath();
-      ctx.roundRect(cardX, cardY, cardW, cardH, radius);
+      safeRoundRect(ctx, cardX, cardY, cardW, cardH, radius);
       ctx.fill();
       ctx.restore();
     }
@@ -624,7 +649,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
     // --- 4. CLIPPED PATH & DRAW WINDOW CHROME WINDOW ---
     ctx.save();
     ctx.beginPath();
-    ctx.roundRect(cardX, cardY, cardW, cardH, radius);
+    safeRoundRect(ctx, cardX, cardY, cardW, cardH, radius);
     ctx.clip();
 
     // Draw header block background
@@ -1187,7 +1212,6 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
               muted={isMuted}
               loop
               preload="auto"
-              crossOrigin="anonymous"
             />
           </div>
 
