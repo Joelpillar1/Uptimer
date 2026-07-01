@@ -799,8 +799,11 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
       const canvas = canvasRef.current;
       const video = videoRef.current;
       if (canvas && video) {
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext('2d', { alpha: false });
         if (ctx) {
+          // Always render at maximum quality in the preview loop
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
           const t = video.currentTime;
           const activeZoom = segments.find(s => s.type === 'zoom' && t >= s.start && t < s.end);
           drawFrameToCanvas(
@@ -925,7 +928,7 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
       audioSource.connect(audioDestination);
 
       // Create mixed video/audio stream
-      const canvasStream = exportCanvas.captureStream(30); // 30 FPS target
+      const canvasStream = exportCanvas.captureStream(60); // 60 fps = no dropped frames during render
       const audioTrack = audioDestination.stream.getAudioTracks()[0];
 
       const mixedStream = new MediaStream();
@@ -935,12 +938,24 @@ export default function VideoBackgroundEditor({ recording, onSaveWithBackground,
       }
 
       // Record Media
+      // High-bitrate settings: VP9 @ 16 Mbps + Opus @ 320 kbps = broadcast-grade output
+      const isVerticalExport = outH > outW;
+      const videoBpsExport = isVerticalExport ? 12_000_000 : 16_000_000;
+
       let recorder: MediaRecorder;
-      const mimeOptions = { mimeType: 'video/webm;codecs=vp9,opus' };
+      const mimeOptions = {
+        mimeType: 'video/webm;codecs=vp9,opus',
+        videoBitsPerSecond: videoBpsExport,
+        audioBitsPerSecond: 320_000,
+      };
       try {
         recorder = new MediaRecorder(mixedStream, mimeOptions);
       } catch (e) {
-        recorder = new MediaRecorder(mixedStream, { mimeType: 'video/webm' });
+        recorder = new MediaRecorder(mixedStream, {
+          mimeType: 'video/webm',
+          videoBitsPerSecond: videoBpsExport,
+          audioBitsPerSecond: 320_000,
+        });
       }
 
       const chunks: Blob[] = [];

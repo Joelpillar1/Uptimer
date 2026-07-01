@@ -28,3 +28,45 @@
   }
 }
 
+/* ── Timeline scroll slider custom thumb ──────────────────────────── */
+#timeline-scroll-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 40px;
+  height: 10px;
+  border-radius: 5px;
+  background: #94a3b8;
+  cursor: grab;
+  transition: background 0.15s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.18);
+}
+#timeline-scroll-slider::-webkit-slider-thumb:hover {
+  background: #64748b;
+}
+#timeline-scroll-slider::-webkit-slider-thumb:active {
+  cursor: grabbing;
+  background: #475569;
+}
+#timeline-scroll-slider::-moz-range-thumb {
+  width: 40px;
+  height: 10px;
+  border: none;
+  border-radius: 5px;
+  background: #94a3b8;
+  cursor: grab;
+}
+#timeline-scroll-slider::-moz-range-thumb:active {
+  cursor: grabbing;
+  background: #475569;
+}
+
+/* ── Scrollbar hide utility ──────────────────────────────────────── */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+

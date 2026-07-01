@@ -1,15 +1,11 @@
-import { useState } from 'react';
 import RecorderDashboard from './components/RecorderDashboard';
 
 export default function App() {
-  const [isStudio, setIsStudio] = useState(false);
-
   return (
     <div className="h-screen w-screen bg-brand-bg text-brand-text flex flex-col overflow-hidden relative font-sans">
       
       {/* Sleek Minimal App Header */}
-      {!isStudio && (
-        <header className="shrink-0 bg-brand-bg border-b border-brand-border px-6 py-4 flex items-center justify-between">
+      <header className="shrink-0 bg-brand-bg border-b border-brand-border px-6 py-4 flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <div className="w-8 h-8 rounded-lg bg-brand-accent/10 border border-brand-accent/20 flex items-center justify-center text-brand-accent">
               <svg className="w-4.5 h-4.5 fill-current" viewBox="0 0 24 24">
@@ -28,12 +24,11 @@ export default function App() {
               <span>Sandbox Mode (Private)</span>
             </span>
           </div>
-        </header>
-      )}
+      </header>
 
       {/* Main Workspace Content */}
       <main className="flex-1 min-h-0 overflow-hidden relative" id="main-content-layout">
-        <RecorderDashboard onStudioModeChange={setIsStudio} />
+        <RecorderDashboard />
       </main>
     </div>
   );

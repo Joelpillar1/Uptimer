@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, ReactElement } from 'react';
 import {
   RecordingStatus,
   VideoResolution,
@@ -40,25 +40,26 @@ import {
 import AudioVisualizer from './AudioVisualizer';
 import ShortcutSettings from './ShortcutSettings';
 import ScreenshotGallery from './ScreenshotGallery';
-import VideoBackgroundEditor from './VideoBackgroundEditor';
+import VideoEditor from './VideoEditor';
+import { fixWebmDuration } from '../utils/webmFix';
 
 interface RecorderDashboardProps {
   onStudioModeChange?: (isStudio: boolean) => void;
 }
 
-export default function RecorderDashboard({ onStudioModeChange }: RecorderDashboardProps = {}) {
+export default function RecorderDashboard({ onStudioModeChange: _onStudioModeChange }: RecorderDashboardProps = {}) {
   // --- 1. CONFIGURATION STATES ---
   const [config, setConfig] = useState<RecorderConfig>({
-    resolution: '4k',
-    fps: 60,
+    resolution: '1080p',
+    fps: 30,
     format: 'webm',
     micEnabled: true,
     cameraEnabled: false,
     pipPosition: 'bottom-right',
     cameraShape: 'circle',
     countdownDuration: 3,
-    videoBitRate: 35000000, // 35 Mbps default
-    audioBitRate: 320000,   // 320 Kbps master audio default
+    videoBitRate: 6000000, // 6 Mbps default
+    audioBitRate: 128000,   // 128 Kbps default
     sourceType: 'screen',
   });
 
@@ -107,6 +108,7 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
   const [status, setStatus] = useState<RecordingStatus>('idle');
   const [countdown, setCountdown] = useState(0);
   const [recordingTime, setRecordingTime] = useState(0);
+  const recordingTimeRef = useRef(0);
   const [estimatedSize, setEstimatedSize] = useState(0);
   const [activeReviewItem, setActiveReviewItem] = useState<RecordingItem | null>(null);
 
@@ -116,7 +118,12 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
 
   // UI Tabs / Panels
   const [sidebarTab, setSidebarTab] = useState<'source' | 'settings' | 'shortcuts'>('source');
-  const [reviewTab, setReviewTab] = useState<'preview' | 'background'>('preview');
+
+  // Editor mode (background editor)
+  const [editMode, setEditMode] = useState(false);
+
+  // Reset edit mode when review item changes
+  useEffect(() => { setEditMode(false); }, [activeReviewItem?.id]);
 
   // Toasts
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
@@ -126,17 +133,6 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
   useEffect(() => {
     setIsInIframe(typeof window !== 'undefined' && window.self !== window.top);
   }, []);
-
-  useEffect(() => {
-    if (onStudioModeChange) {
-      const isStudio = status === 'review' && !!activeReviewItem && reviewTab === 'background';
-      onStudioModeChange(isStudio);
-    }
-  }, [status, activeReviewItem, reviewTab, onStudioModeChange]);
-
-  useEffect(() => {
-    setReviewTab('preview');
-  }, [activeReviewItem?.id]);
 
   // Stream state for clean conditional rendering of video element
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
@@ -167,6 +163,7 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
 
   // Media Recording Ref Objects
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const compositorWorkerRef = useRef<Worker | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   const actualMimeTypeRef = useRef<string>('');
   const timerIntervalRef = useRef<number | null>(null);
@@ -186,6 +183,10 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
     if (renderLoopIdRef.current) {
       cancelAnimationFrame(renderLoopIdRef.current);
       renderLoopIdRef.current = null;
+    }
+    if (compositorWorkerRef.current) {
+      compositorWorkerRef.current.terminate();
+      compositorWorkerRef.current = null;
     }
     
     // Stop all tracks
@@ -398,6 +399,9 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
       const audioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       const audioCtx = new audioContextClass();
       audioContextRef.current = audioCtx;
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+      }
 
       const audioDestination = audioCtx.createMediaStreamDestination();
 
@@ -434,9 +438,18 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
         // ALWAYS use Canvas Compositor for Screen Mode to support seamless live camera overlay toggle!
         const canvas = document.createElement('canvas');
         
-        // Match the video capture dimensions
-        const capWidth = screenVideoElement ? screenVideoElement.videoWidth || 1920 : 1920;
-        const capHeight = screenVideoElement ? screenVideoElement.videoHeight || 1080 : 1080;
+        // Set canvas dimensions explicitly to match chosen config resolution
+        let capWidth = 1920;
+        let capHeight = 1080;
+        if (config.resolution === '4k') {
+          capWidth = 3840; capHeight = 2160;
+        } else if (config.resolution === '1440p') {
+          capWidth = 2560; capHeight = 1440;
+        } else if (config.resolution === '1080p') {
+          capWidth = 1920; capHeight = 1080;
+        } else {
+          capWidth = 1280; capHeight = 720;
+        }
         canvas.width = capWidth;
         canvas.height = capHeight;
         canvasRef.current = canvas;
@@ -454,77 +467,287 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
           const c = canvasRef.current;
           const context = canvasCtxRef.current;
 
-          // 1. Draw base display screen
-          if (screenVideoRef.current && screenVideoRef.current.readyState >= 2) {
-            context.drawImage(screenVideoRef.current, 0, 0, c.width, c.height);
-          } else {
-            context.fillStyle = '#0f0e0d';
-            context.fillRect(0, 0, c.width, c.height);
-          }
+          const camPct = (configRef.current.cameraSize || 18) / 100;
+          const hasCamera = configRef.current.cameraEnabled && cameraVideoRef.current && cameraStreamRef.current && cameraVideoRef.current.readyState >= 2;
+          const pos = configRef.current.pipPosition;
 
-          // 2. Draw Camera PIP Overlay if camera active and enabled
-          if (configRef.current.cameraEnabled && cameraVideoRef.current && cameraStreamRef.current && cameraVideoRef.current.readyState >= 2) {
-            // PIP sizing calculation
-            const pipW = Math.round(c.width * 0.18);
-            const pipH = Math.round(pipW * 0.75); // 4:3 standard aspect ratio crop
-            const padding = Math.round(c.width * 0.02);
-
-            let pipX = c.width - pipW - padding;
-            let pipY = c.height - pipH - padding;
-
-            if (configRef.current.pipPosition === 'top-left') {
-              pipX = padding;
-              pipY = padding;
-            } else if (configRef.current.pipPosition === 'top-right') {
-              pipX = c.width - pipW - padding;
-              pipY = padding;
-            } else if (configRef.current.pipPosition === 'bottom-left') {
-              pipX = padding;
-              pipY = c.height - pipH - padding;
-            }
-
-            context.save();
-            if (configRef.current.cameraShape === 'circle') {
-              const radius = Math.min(pipW, pipH) / 2;
-              const cx = pipX + pipW / 2;
-              const cy = pipY + pipH / 2;
-              
-              context.beginPath();
-              context.arc(cx, cy, radius, 0, Math.PI * 2);
-              context.clip();
-
-              context.drawImage(cameraVideoRef.current, cx - radius, cy - radius, radius * 2, radius * 2);
+          // Helper to cover crop video
+          const drawVideoCover = (video: HTMLVideoElement, dx: number, dy: number, dw: number, dh: number) => {
+            const vAspect = video.videoWidth / video.videoHeight || 4/3;
+            const tAspect = dw / dh;
+            let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
+            if (vAspect > tAspect) {
+              sw = video.videoHeight * tAspect;
+              sx = (video.videoWidth - sw) / 2;
             } else {
-              const radius = 16;
-              context.beginPath();
-              context.roundRect(pipX, pipY, pipW, pipH, radius);
-              context.clip();
-              context.drawImage(cameraVideoRef.current, pipX, pipY, pipW, pipH);
+              sh = video.videoWidth / tAspect;
+              sy = (video.videoHeight - sh) / 2;
             }
+            context.drawImage(video, sx, sy, sw, sh, dx, dy, dw, dh);
+          };
+
+          // Helper to draw screen fit
+          const drawScreenFit = (video: HTMLVideoElement, dx: number, dy: number, dw: number, dh: number) => {
+            const vAspect = video.videoWidth / video.videoHeight || 16/9;
+            const tAspect = dw / dh;
+            let w = dw;
+            let h = dh;
+            let x = dx;
+            let y = dy;
+            if (vAspect > tAspect) {
+              h = dw / vAspect;
+              y = dy + (dh - h) / 2;
+            } else {
+              w = dh * vAspect;
+              x = dx + (dw - w) / 2;
+            }
+            context.drawImage(video, x, y, w, h);
+          };
+
+          if (hasCamera && (pos === 'split-right' || pos === 'split-left' || pos === 'split-bottom' || pos === 'split-top')) {
+            // ─── PREMIUM CARD-BASED SPLIT LAYOUTS ───
+            // 1. Draw premium background gradient with warm center radial glow
+            const bgGrad = context.createRadialGradient(
+              c.width / 2, c.height / 2, 50,
+              c.width / 2, c.height / 2, c.width * 0.7
+            );
+            bgGrad.addColorStop(0, '#2e1065'); // Deep violet glow
+            bgGrad.addColorStop(0.5, '#0c0a09'); // Warm dark stone base
+            bgGrad.addColorStop(1, '#020617'); // Pitch dark blue margins
+            context.fillStyle = bgGrad;
+            context.fillRect(0, 0, c.width, c.height);
+
+            // Card path helper — normal rounded rect with clean 24px corner radius for split cards
+            const defineShapePath = (ctx: CanvasRenderingContext2D, _shape: string, x: number, y: number, w: number, h: number) => {
+              ctx.beginPath();
+              ctx.roundRect(x, y, w, h, 24);
+              ctx.closePath();
+            };
+
+            const gap = Math.round(c.width * 0.025); // Gap between elements
+            let scrX = 0, scrY = 0, scrW = 0, scrH = 0;
+            let camX = 0, camY = 0, camW = 0, camH = 0;
+
+            if (pos === 'split-right' || pos === 'split-left') {
+              // Calculate a shared height so screen (16:9) and camera (9:16) match heights exactly
+              // and fit within both canvas width and height boundaries
+              const maxHByHeight = Math.round(c.height * 0.78); // fits canvas height with padding
+              const maxHByWidth = Math.round((c.width - gap * 4) / (16 / 9 + 9 / 16)); // fits canvas width
+              const sharedH = Math.min(maxHByHeight, maxHByWidth);
+
+              scrH = sharedH;
+              scrW = Math.round(scrH * (16 / 9));
+
+              camH = sharedH;
+              camW = Math.round(camH * (9 / 16));
+
+              const totalW = scrW + gap + camW;
+              const startX = (c.width - totalW) / 2;
+              const centeredY = (c.height - sharedH) / 2;
+
+              if (pos === 'split-right') {
+                // Screen left, camera right
+                scrX = startX;
+                scrY = centeredY;
+                camX = startX + scrW + gap;
+                camY = centeredY;
+              } else {
+                // Camera left, screen right
+                camX = startX;
+                camY = centeredY;
+                scrX = startX + camW + gap;
+                scrY = centeredY;
+              }
+            } else {
+              // Stacked: both cards same width and height
+              const maxW = Math.round(c.width * 0.78);
+              const maxTotalH = c.height * 0.9;
+
+              const eachH = Math.round((maxTotalH - gap) / 2);
+              const eachW = Math.min(maxW, Math.round(eachH * 1.777));
+              const finalH = Math.round(eachW / 1.777);
+              const finalW = eachW;
+
+              const totalH = finalH * 2 + gap;
+              const startY = (c.height - totalH) / 2;
+              const startX = (c.width - finalW) / 2;
+
+              scrW = finalW;
+              scrH = finalH;
+              camW = finalW;
+              camH = finalH;
+
+              if (pos === 'split-bottom') {
+                // Screen on top, camera on bottom
+                scrX = startX; scrY = startY;
+                camX = startX; camY = startY + finalH + gap;
+              } else {
+                // Camera on top, screen on bottom
+                camX = startX; camY = startY;
+                scrX = startX; scrY = startY + finalH + gap;
+              }
+            }
+
+            // Draw shadow for Screen card
+            context.save();
+            context.shadowColor = 'rgba(0, 0, 0, 0.45)';
+            context.shadowBlur = 40;
+            context.shadowOffsetY = 12;
+            defineShapePath(context, '', scrX, scrY, scrW, scrH);
+            context.fillStyle = '#000';
+            context.fill();
             context.restore();
 
-            // Draw clean border stroke
-            context.strokeStyle = 'rgba(255, 255, 255, 0.85)';
-            context.lineWidth = Math.round(c.width * 0.002) || 2;
-            context.beginPath();
-            if (configRef.current.cameraShape === 'circle') {
-              const radius = Math.min(pipW, pipH) / 2;
-              const cx = pipX + pipW / 2;
-              const cy = pipY + pipH / 2;
-              context.arc(cx, cy, radius, 0, Math.PI * 2);
-            } else {
-              const radius = 16;
-              context.roundRect(pipX, pipY, pipW, pipH, radius);
+            // Draw Screen content inside card
+            if (screenVideoRef.current && screenVideoRef.current.readyState >= 2) {
+              context.save();
+              defineShapePath(context, '', scrX, scrY, scrW, scrH);
+              context.clip();
+              drawVideoCover(screenVideoRef.current, scrX, scrY, scrW, scrH);
+              context.restore();
             }
-            context.stroke();
-          }
 
-          // Continue render frame at screen refresh rate
-          renderLoopIdRef.current = requestAnimationFrame(drawComposedFrame);
+            // Draw subtle Screen card border
+            context.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+            context.lineWidth = 2;
+            defineShapePath(context, '', scrX, scrY, scrW, scrH);
+            context.stroke();
+
+            // Draw shadow for Camera card
+            context.save();
+            context.shadowColor = 'rgba(0, 0, 0, 0.45)';
+            context.shadowBlur = 40;
+            context.shadowOffsetY = 12;
+            defineShapePath(context, configRef.current.cameraShape, camX, camY, camW, camH);
+            context.fillStyle = '#000';
+            context.fill();
+            context.restore();
+
+            // Draw Camera content inside card
+            if (cameraVideoRef.current) {
+              context.save();
+              defineShapePath(context, configRef.current.cameraShape, camX, camY, camW, camH);
+              context.clip();
+              drawVideoCover(cameraVideoRef.current, camX, camY, camW, camH);
+              context.restore();
+            }
+
+            // Draw subtle Camera card border
+            context.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            context.lineWidth = 2;
+            defineShapePath(context, configRef.current.cameraShape, camX, camY, camW, camH);
+            context.stroke();
+          } else {
+            // Standard Layout: Screen takes up full canvas
+            if (screenVideoRef.current && screenVideoRef.current.readyState >= 2) {
+              context.drawImage(screenVideoRef.current, 0, 0, c.width, c.height);
+            } else {
+              context.fillStyle = '#0f0e0d';
+              context.fillRect(0, 0, c.width, c.height);
+            }
+
+            // Floating PIP overlay
+            if (hasCamera) {
+              const pipW = Math.round(c.width * camPct);
+              const pipH = pipW; // Perfect 1:1 aspect ratio square box
+              const padding = Math.round(c.width * 0.02);
+
+              let pipX = c.width - pipW - padding;
+              let pipY = c.height - pipH - padding;
+
+              if (pos === 'top-left') {
+                pipX = padding;
+                pipY = padding;
+              } else if (pos === 'top-right') {
+                pipX = c.width - pipW - padding;
+                pipY = padding;
+              } else if (pos === 'bottom-left') {
+                pipX = padding;
+                pipY = c.height - pipH - padding;
+              } else if (pos === 'bottom-center') {
+                pipX = (c.width - pipW) / 2;
+                pipY = c.height - pipH - padding;
+              } else if (pos === 'top-center') {
+                pipX = (c.width - pipW) / 2;
+                pipY = padding;
+              }
+
+              // Path Helper — draws a mathematically perfect Apple-style Squircle (superellipse, n = 3.0)
+              const defineShapePath = (ctx: CanvasRenderingContext2D, _shape: string, x: number, y: number, w: number, h: number) => {
+                ctx.beginPath();
+                const cx = x + w / 2;
+                const cy = y + h / 2;
+                const rx = w / 2;
+                const ry = h / 2;
+                const n = 3.0; // Perfect squircle curve factor for organic Apple contours
+                
+                for (let i = 0; i <= 360; i += 3) {
+                  const angle = (i * Math.PI) / 180;
+                  const cosT = Math.cos(angle);
+                  const sinT = Math.sin(angle);
+                  
+                  const px = cx + Math.sign(cosT) * rx * Math.pow(Math.abs(cosT), 2 / n);
+                  const py = cy + Math.sign(sinT) * ry * Math.pow(Math.abs(sinT), 2 / n);
+                  
+                  if (i === 0) {
+                    ctx.moveTo(px, py);
+                  } else {
+                    ctx.lineTo(px, py);
+                  }
+                }
+                ctx.closePath();
+              };
+
+              context.save();
+              defineShapePath(context, configRef.current.cameraShape, pipX, pipY, pipW, pipH);
+              context.clip();
+              drawVideoCover(cameraVideoRef.current!, pipX, pipY, pipW, pipH);
+              context.restore();
+
+              // Draw premium border glow / contour border
+              context.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+              context.lineWidth = Math.round(c.width * 0.002) || 2;
+              defineShapePath(context, configRef.current.cameraShape, pipX, pipY, pipW, pipH);
+              context.stroke();
+            }
+          }
         };
 
-        // Start render loop
-        drawComposedFrame();
+        // Drive the drawing loop via a high-precision Web Worker interval to prevent background tab requestAnimationFrame throttling
+        if (compositorWorkerRef.current) {
+          compositorWorkerRef.current.terminate();
+          compositorWorkerRef.current = null;
+        }
+
+        const workerCode = `
+          let timer = null;
+          self.onmessage = function(e) {
+            if (e.data.action === 'start') {
+              if (timer) clearInterval(timer);
+              timer = setInterval(() => {
+                self.postMessage('tick');
+              }, e.data.interval);
+            } else if (e.data.action === 'stop') {
+              if (timer) {
+                clearInterval(timer);
+                timer = null;
+              }
+            }
+          };
+        `;
+        const blob = new Blob([workerCode], { type: 'application/javascript' });
+        const workerUrl = URL.createObjectURL(blob);
+        const worker = new Worker(workerUrl);
+        compositorWorkerRef.current = worker;
+
+        const fpsInterval = Math.round(1000 / config.fps);
+        worker.postMessage({ action: 'start', interval: fpsInterval });
+
+        worker.onmessage = (e) => {
+          if (e.data === 'tick') {
+            drawComposedFrame();
+          }
+        };
 
         // Capture stream of composited canvas
         finalVideoStream = canvas.captureStream(config.fps);
@@ -574,15 +797,14 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
       setStatus('countdown');
       setCountdown(config.countdownDuration);
       
+      let currentCount = config.countdownDuration;
       const countInterval = window.setInterval(() => {
-        setCountdown((prev) => {
-          if (prev <= 1) {
-            clearInterval(countInterval);
-            triggerRecording();
-            return 0;
-          }
-          return prev - 1;
-        });
+        currentCount -= 1;
+        setCountdown(currentCount);
+        if (currentCount <= 0) {
+          clearInterval(countInterval);
+          triggerRecording();
+        }
       }, 1000);
     } else {
       triggerRecording();
@@ -594,6 +816,7 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
     
     setStatus('recording');
     setRecordingTime(0);
+    recordingTimeRef.current = 0;
     setEstimatedSize(0);
     recordedChunksRef.current = [];
 
@@ -636,21 +859,21 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
     }
 
     // Set premium studio-grade bitrates
-    let dynamicVideoBitRate = 10000000; // 10 Mbps baseline
-    let dynamicAudioBitRate = 192000;   // 192 Kbps baseline
+    let dynamicVideoBitRate = 6000000; // 6 Mbps baseline
+    let dynamicAudioBitRate = 128000;   // 128 Kbps baseline
 
     if (config.resolution === '4k') {
-      dynamicVideoBitRate = 35000000;   // 35 Mbps ProRes-like Cinematic Master
-      dynamicAudioBitRate = 320000;     // 320 Kbps Audiophile Master quality
+      dynamicVideoBitRate = 12000000;   // 12 Mbps
+      dynamicAudioBitRate = 192000;     // 192 Kbps
     } else if (config.resolution === '1440p') {
-      dynamicVideoBitRate = 18000000;   // 18 Mbps Quad HD Retina
-      dynamicAudioBitRate = 256000;     // 256 Kbps High Fidelity Studio
+      dynamicVideoBitRate = 8000000;    // 8 Mbps
+      dynamicAudioBitRate = 160000;     // 160 Kbps
     } else if (config.resolution === '1080p') {
-      dynamicVideoBitRate = 10000000;   // 10 Mbps Full HD Premium
-      dynamicAudioBitRate = 192000;     // 192 Kbps CD quality
+      dynamicVideoBitRate = 6000000;    // 6 Mbps
+      dynamicAudioBitRate = 128000;     // 128 Kbps
     } else {
-      dynamicVideoBitRate = 5000000;    // 5 Mbps HD Balanced
-      dynamicAudioBitRate = 128000;     // 128 Kbps Standard
+      dynamicVideoBitRate = 3000000;    // 3 Mbps
+      dynamicAudioBitRate = 96000;      // 96 Kbps
     }
 
     // Boost bit budget for butter-smooth 60fps high-motion frames
@@ -689,7 +912,11 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
 
       // Start elapsed timer
       timerIntervalRef.current = window.setInterval(() => {
-        setRecordingTime((prev) => prev + 1);
+        setRecordingTime((prev) => {
+          const next = prev + 1;
+          recordingTimeRef.current = next;
+          return next;
+        });
       }, 1000);
 
       triggerToast('Recording started! Capture active.', 'success');
@@ -714,7 +941,11 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
         recorder.start(1000);
         
         timerIntervalRef.current = window.setInterval(() => {
-          setRecordingTime((prev) => prev + 1);
+          setRecordingTime((prev) => {
+            const next = prev + 1;
+            recordingTimeRef.current = next;
+            return next;
+          });
         }, 1000);
       } catch (err) {
         triggerToast('Could not initialize recording engine.', 'error');
@@ -740,7 +971,11 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
       setStatus('recording');
       
       timerIntervalRef.current = window.setInterval(() => {
-        setRecordingTime((prev) => prev + 1);
+        setRecordingTime((prev) => {
+          const next = prev + 1;
+          recordingTimeRef.current = next;
+          return next;
+        });
       }, 1000);
       
       triggerToast('Recording resumed.', 'success');
@@ -765,7 +1000,7 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
     }
   };
 
-  const compileAndSaveRecording = () => {
+  const compileAndSaveRecording = async () => {
     if (recordedChunksRef.current.length === 0) {
       triggerToast('No video frames captured.', 'error');
       setStatus('idle');
@@ -781,7 +1016,13 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
       type = 'video/mp4';
     }
 
-    const blob = new Blob(recordedChunksRef.current, { type });
+    let blob = new Blob(recordedChunksRef.current, { type });
+    
+    // Inject seek headers and duration if the recorded format is WebM
+    if (type.includes('webm')) {
+      const durationMs = recordingTimeRef.current * 1000;
+      blob = await fixWebmDuration(blob, durationMs);
+    }
     const url = URL.createObjectURL(blob);
     
     const timestampStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -792,7 +1033,7 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
       name: `recording-${dateStr}-${timestampStr.replace(/[\s:]/g, '_')}`,
       blob,
       url,
-      duration: recordingTime,
+      duration: recordingTimeRef.current,
       timestamp: `${dateStr} ${timestampStr}`,
       size: blob.size,
       format: type.split(';')[0].replace('video/', '').toUpperCase(),
@@ -1204,12 +1445,12 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  if (status === 'review' && activeReviewItem && reviewTab === 'background') {
+  // ── Video editor full-screen early return
+  if (status === 'review' && activeReviewItem && editMode) {
     return (
-      <VideoBackgroundEditor
+      <VideoEditor
         recording={activeReviewItem}
-        onSaveWithBackground={handleSaveWithBackground}
-        onBack={() => setReviewTab('preview')}
+        onBack={() => setEditMode(false)}
       />
     );
   }
@@ -1255,29 +1496,16 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
                 {status === 'idle' ? 'Live Stream' : status === 'recording' ? 'Recording' : status === 'paused' ? 'Paused' : status === 'countdown' ? 'Countdown' : 'Review Capture'}
               </span>
 
+              {/* Edit Background button — only in review mode */}
               {status === 'review' && activeReviewItem && (
-                <div className="flex items-center space-x-1 bg-brand-card border border-brand-border/60 p-0.5 rounded-lg">
-                  <button
-                    onClick={() => setReviewTab('preview')}
-                    className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all duration-150 ${
-                      reviewTab === 'preview'
-                        ? 'bg-[#191919] text-white shadow-sm'
-                        : 'text-brand-text-muted hover:text-brand-text hover:bg-brand-surface/40'
-                    }`}
-                  >
-                    Player
-                  </button>
-                  <button
-                    onClick={() => setReviewTab('background')}
-                    className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all duration-150 ${
-                      reviewTab === 'background'
-                        ? 'bg-[#191919] text-white shadow-sm'
-                        : 'text-brand-text-muted hover:text-brand-text hover:bg-brand-surface/40'
-                    }`}
-                  >
-                    Canvas Studio
-                  </button>
-                </div>
+                <button
+                  onClick={() => setEditMode(true)}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-semibold bg-brand-accent/10 text-brand-accent hover:bg-brand-accent/20 border border-brand-accent/20 transition-all duration-150"
+                  id="enter-editor-btn"
+                >
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+                  Edit Background
+                </button>
               )}
             </div>
 
@@ -1301,32 +1529,22 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
           </div>
 
           {/* Active Preview Area */}
-          <div className={`relative flex-1 flex flex-col justify-center min-h-[340px] ${reviewTab === 'preview' || status !== 'review' ? 'bg-black items-center' : 'bg-[#12110F] p-4 overflow-y-auto'}`}>
+          <div className="relative flex-1 flex flex-col justify-center min-h-[340px] bg-black items-center">
             {/* Review mode video player */}
             {status === 'review' && activeReviewItem ? (
-              reviewTab === 'preview' ? (
-                <div className="w-full h-full flex flex-col justify-between p-4">
-                  <div className="flex-1 max-h-[440px] relative bg-black flex items-center justify-center p-2 rounded-xl">
-                    <video
-                      src={activeReviewItem.url}
-                      controls
-                      playsInline
-                      muted
-                      preload="metadata"
-                      className="max-h-[420px] w-full rounded-lg object-contain shadow-lg"
-                      id="review-video-player"
-                    />
-                  </div>
-                </div>
-              ) : (
-                <div className="w-full max-w-5xl mx-auto py-2 animate-fade-in">
-                  <VideoBackgroundEditor
-                    recording={activeReviewItem}
-                    onSaveWithBackground={handleSaveWithBackground}
-                    onBack={() => setReviewTab('preview')}
+              <div className="w-full h-full flex flex-col justify-between p-4">
+                <div className="flex-1 max-h-[440px] relative bg-black flex items-center justify-center p-2 rounded-xl">
+                  <video
+                    src={activeReviewItem.url}
+                    controls
+                    playsInline
+                    muted
+                    preload="metadata"
+                    className="max-h-[420px] w-full rounded-lg object-contain shadow-lg"
+                    id="review-video-player"
                   />
                 </div>
-              )
+              </div>
             ) : (
               // Active Camera / Display Preview feed
               <div className="w-full h-full relative flex items-center justify-center">
@@ -1649,46 +1867,138 @@ export default function RecorderDashboard({ onStudioModeChange }: RecorderDashbo
               {config.cameraEnabled && (
                 <div className="space-y-3 p-3 bg-brand-surface/40 border border-brand-border rounded-lg animate-fade-in">
                   <span className="text-[10px] font-semibold text-brand-text block pb-1 border-b border-brand-border/60">Camera Overlay</span>
-                  
-                  {/* Shape Selection */}
-                  <div>
-                    <span className="text-[9px] text-brand-text-muted block mb-1 font-mono uppercase">Shape</span>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        onClick={() => setConfig((prev) => ({ ...prev, cameraShape: 'circle' }))}
-                        className={`py-1 text-center text-xs rounded-lg font-medium border transition-all ${
-                          config.cameraShape === 'circle' ? 'bg-brand-surface border-brand-accent/30 text-brand-text font-semibold' : 'bg-brand-card border-brand-border text-brand-text-muted'
-                        }`}
-                      >
-                        Circle
-                      </button>
-                      <button
-                        onClick={() => setConfig((prev) => ({ ...prev, cameraShape: 'square' }))}
-                        className={`py-1 text-center text-xs rounded-lg font-medium border transition-all ${
-                          config.cameraShape === 'square' ? 'bg-brand-surface border-brand-accent/30 text-brand-text font-semibold' : 'bg-brand-card border-brand-border text-brand-text-muted'
-                        }`}
-                      >
-                        Rectangle
-                      </button>
-                    </div>
-                  </div>
 
-                  {/* Corner Position selection */}
+                  {/* Layout Position selection - visual icon grid */}
                   <div>
-                    <span className="text-[9px] text-brand-text-muted block mb-1 font-mono uppercase font-medium">Position</span>
-                    <div className="grid grid-cols-2 gap-1.5 text-center text-[11px]">
-                      {(['top-left', 'top-right', 'bottom-left', 'bottom-right'] as PiPPosition[]).map((pos) => (
+                    <span className="text-[9px] text-brand-text-muted block mb-1.5 font-mono uppercase font-medium">Layout Position</span>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {([
+                        {
+                          id: 'bottom-right', title: 'Bottom Right',
+                          svg: (
+                            <svg viewBox="0 0 40 28" className="w-full h-full">
+                              <rect x="2" y="2" width="36" height="24" rx="3" fill="currentColor" opacity="0.25"/>
+                              <rect x="27" y="17" width="9" height="7" rx="2" fill="#a78bfa"/>
+                            </svg>
+                          )
+                        },
+                        {
+                          id: 'bottom-left', title: 'Bottom Left',
+                          svg: (
+                            <svg viewBox="0 0 40 28" className="w-full h-full">
+                              <rect x="2" y="2" width="36" height="24" rx="3" fill="currentColor" opacity="0.25"/>
+                              <rect x="4" y="17" width="9" height="7" rx="2" fill="#a78bfa"/>
+                            </svg>
+                          )
+                        },
+                        {
+                          id: 'top-right', title: 'Top Right',
+                          svg: (
+                            <svg viewBox="0 0 40 28" className="w-full h-full">
+                              <rect x="2" y="2" width="36" height="24" rx="3" fill="currentColor" opacity="0.25"/>
+                              <rect x="27" y="4" width="9" height="7" rx="2" fill="#a78bfa"/>
+                            </svg>
+                          )
+                        },
+                        {
+                          id: 'top-left', title: 'Top Left',
+                          svg: (
+                            <svg viewBox="0 0 40 28" className="w-full h-full">
+                              <rect x="2" y="2" width="36" height="24" rx="3" fill="currentColor" opacity="0.25"/>
+                              <rect x="4" y="4" width="9" height="7" rx="2" fill="#a78bfa"/>
+                            </svg>
+                          )
+                        },
+                        {
+                          id: 'bottom-center', title: 'Bottom Center',
+                          svg: (
+                            <svg viewBox="0 0 40 28" className="w-full h-full">
+                              <rect x="2" y="2" width="36" height="24" rx="3" fill="currentColor" opacity="0.25"/>
+                              <rect x="15.5" y="17" width="9" height="7" rx="2" fill="#a78bfa"/>
+                            </svg>
+                          )
+                        },
+                        {
+                          id: 'top-center', title: 'Top Center',
+                          svg: (
+                            <svg viewBox="0 0 40 28" className="w-full h-full">
+                              <rect x="2" y="2" width="36" height="24" rx="3" fill="currentColor" opacity="0.25"/>
+                              <rect x="15.5" y="4" width="9" height="7" rx="2" fill="#a78bfa"/>
+                            </svg>
+                          )
+                        },
+                        // Side-by-Side: camera RIGHT
+                        {
+                          id: 'split-right', title: 'Side-by-Side (Camera Right)',
+                          svg: (
+                            <svg viewBox="0 0 40 28" className="w-full h-full">
+                              <rect x="2" y="3" width="22" height="22" rx="3" fill="currentColor" opacity="0.25"/>
+                              <rect x="27" y="3" width="11" height="22" rx="3" fill="#a78bfa" opacity="0.9"/>
+                            </svg>
+                          )
+                        },
+                        // Side-by-Side: camera LEFT
+                        {
+                          id: 'split-left', title: 'Side-by-Side (Camera Left)',
+                          svg: (
+                            <svg viewBox="0 0 40 28" className="w-full h-full">
+                              <rect x="2" y="3" width="11" height="22" rx="3" fill="#a78bfa" opacity="0.9"/>
+                              <rect x="16" y="3" width="22" height="22" rx="3" fill="currentColor" opacity="0.25"/>
+                            </svg>
+                          )
+                        },
+                        // Stacked: camera BOTTOM
+                        {
+                          id: 'split-bottom', title: 'Stacked (Camera Bottom)',
+                          svg: (
+                            <svg viewBox="0 0 40 28" className="w-full h-full">
+                              <rect x="4" y="2" width="32" height="11" rx="3" fill="currentColor" opacity="0.25"/>
+                              <rect x="4" y="15" width="32" height="11" rx="3" fill="#a78bfa" opacity="0.9"/>
+                            </svg>
+                          )
+                        },
+                        // Stacked: camera TOP
+                        {
+                          id: 'split-top', title: 'Stacked (Camera Top)',
+                          svg: (
+                            <svg viewBox="0 0 40 28" className="w-full h-full">
+                              <rect x="4" y="2" width="32" height="11" rx="3" fill="#a78bfa" opacity="0.9"/>
+                              <rect x="4" y="15" width="32" height="11" rx="3" fill="currentColor" opacity="0.25"/>
+                            </svg>
+                          )
+                        },
+                      ] as { id: PiPPosition; title: string; svg: ReactElement }[]).map((posOpt) => (
                         <button
-                          key={pos}
-                          onClick={() => setConfig((prev) => ({ ...prev, pipPosition: pos }))}
-                          className={`py-1 rounded-lg border font-medium capitalize transition-all ${
-                            config.pipPosition === pos ? 'bg-brand-surface border-brand-accent/30 text-brand-text font-semibold' : 'bg-brand-card border-brand-border text-brand-text-muted'
+                          key={posOpt.id}
+                          title={posOpt.title}
+                          onClick={() => setConfig((prev) => ({ ...prev, pipPosition: posOpt.id }))}
+                          className={`relative p-1.5 rounded-lg border transition-all aspect-video flex items-center justify-center ${
+                            config.pipPosition === posOpt.id
+                              ? 'border-brand-accent bg-brand-accent/10 text-white'
+                              : 'border-brand-border bg-brand-card text-brand-text-muted hover:border-brand-accent/40 hover:text-brand-text'
                           }`}
                         >
-                          {pos.replace('-', ' ')}
+                          {posOpt.svg}
                         </button>
                       ))}
                     </div>
+                  </div>
+
+                  {/* Size slider control */}
+                  <div>
+                    <div className="flex items-center justify-between text-[9px] text-brand-text-muted mb-1 font-mono uppercase">
+                      <span>Camera Size</span>
+                      <span>{config.cameraSize || 18}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={10}
+                      max={45}
+                      step={1}
+                      value={config.cameraSize || 18}
+                      onChange={(e) => setConfig((prev) => ({ ...prev, cameraSize: parseInt(e.target.value) }))}
+                      className="w-full h-1 bg-brand-border rounded-lg appearance-none cursor-pointer accent-brand-accent focus:outline-none"
+                    />
                   </div>
                 </div>
               )}
